@@ -1,5 +1,5 @@
 # views/admin_view.py
-# (Versão 8.0 - Lote 3 Revisado: Implementa ErrorModal)
+# (Versão 8.2 - Lote 5: Corrige "Tela Branca" / "AssertionError")
 
 import flet as ft
 # Importamos AMBOS os clientes
@@ -9,19 +9,19 @@ from supabase_auth.errors import AuthApiError
 class AdminView(ft.Column):
     """
     Representa o conteúdo da aba Administração.
-    Versão 8.0 (Lote 3 Revisado):
-    - (Item 11) Substitui show_snackbar (para erros) pelo novo self.error_modal.
-    - (Item 11 / Erro #4) Adiciona 'handle_db_error' para traduzir erros.
+    Versão 8.2 (Lote 5):
+    - (BUGFIX) Corrige "Tela Branca" (AssertionError) ao logar como admin.
+    - 'load_users()' agora é chamado pelo 'on_mount' em vez do '__init__',
+      garantindo que o controlo exista na página antes de 'update()'.
     """
     
-    # (LOTE 3, Item 11) - Aceita o error_modal
     def __init__(self, page, error_modal=None):
         super().__init__()
         self.page = page
         self.alignment = ft.MainAxisAlignment.START
         self.spacing = 20
         self.padding = 20
-        self.error_modal = error_modal # (LOTE 3)
+        self.error_modal = error_modal
         
         self.progress_ring = ft.ProgressRing(visible=True, width=32, height=32)
         
@@ -29,7 +29,7 @@ class AdminView(ft.Column):
             columns=[
                 ft.DataColumn(ft.Text("ID do Utilizador (UUID)", weight=ft.FontWeight.BOLD)),
                 ft.DataColumn(ft.Text("Nome Completo", weight=ft.FontWeight.BOLD)),
-                ft.DataColumn(ft.Text("Função", weight=ft.FontWeight.BOLD)), #
+                ft.DataColumn(ft.Text("Função", weight=ft.FontWeight.BOLD)), 
                 ft.DataColumn(ft.Text("Ações", weight=ft.FontWeight.BOLD)),
             ],
             rows=[],
@@ -52,7 +52,7 @@ class AdminView(ft.Column):
             ft.ElevatedButton(
                 "Adicionar Novo Utilizador", 
                 icon="ADD", 
-                on_click=self.open_add_modal # (Ainda não implementado)
+                on_click=self.open_add_modal
             ),
             ft.Divider(),
             ft.Container(
@@ -61,7 +61,18 @@ class AdminView(ft.Column):
             )
         ]
 
-        # Carrega os dados assim que a vista é criada
+        # --- (CORREÇÃO LOTE 5.2) ---
+        # 1. Removemos o 'load_users()' daqui
+        # self.load_users() 
+        
+        # 2. Adicionamos o evento 'on_mount'
+        self.on_mount = self.on_view_mount
+        # --- FIM DA CORREÇÃO ---
+
+    # --- (NOVA FUNÇÃO LOTE 5.2) ---
+    def on_view_mount(self, e):
+        """Chamado pelo Flet DEPOIS que o controlo é adicionado à página."""
+        print("AdminView: Controlo montado. A carregar utilizadores...")
         self.load_users()
 
     def load_users_wrapper(self, e):
@@ -71,20 +82,24 @@ class AdminView(ft.Column):
     def load_users(self):
         """
         Busca TODOS os perfis da tabela 'perfis_usuarios'.
-        (V7 - Usa o cliente 'supabase' normal, confiando no RLS)
+        (V8.1 - Usa supabase_admin para ignorar RLS)
         """
-        print("AdminView: A carregar lista de utilizadores (Modo RLS)...")
+        print("AdminView: A carregar lista de utilizadores (Modo Admin)...")
         self.progress_ring.visible = True
-        self.update()
+        
+        # (CORREÇÃO LOTE 5.2) - Chamada de 'update()'
+        # Agora é seguro chamar 'update()' porque 'load_users' 
+        # só é chamado 'on_mount'.
+        self.update() 
         
         try:
-            resposta_perfis = supabase.table('perfis_usuarios').select('*').execute()
+            resposta_perfis = supabase_admin.table('perfis_usuarios').select('*').execute()
             
             self.tabela_users.rows.clear()
             
             if resposta_perfis.data:
                 for profile in resposta_perfis.data:
-                    user_id = profile.get('id_usuario') #
+                    user_id = profile.get('id_usuario') 
 
                     self.tabela_users.rows.append(
                         ft.DataRow(
@@ -92,7 +107,7 @@ class AdminView(ft.Column):
                             cells=[
                                 ft.DataCell(ft.Text(user_id)), 
                                 ft.DataCell(ft.Text(profile.get('nome_completo', '---'))), 
-                                ft.DataCell(ft.Text(profile.get('funcao', 'N/A'))), #
+                                ft.DataCell(ft.Text(profile.get('funcao', 'N/A'))), 
                                 ft.DataCell(
                                     ft.Row([
                                         ft.IconButton(icon="EDIT", tooltip="Editar Função", icon_color="blue700"),
@@ -110,13 +125,12 @@ class AdminView(ft.Column):
                     ])
                 )
             
-            print("AdminView: Utilizadores carregados com sucesso (Modo RLS).")
+            print("AdminView: Utilizadores carregados com sucesso (Modo Admin).")
 
         except Exception as ex:
             print(f"Erro CRÍTICO ao carregar perfis: {ex}") 
             import traceback
             traceback.print_exc()
-            # (LOTE 3, Erro #4) - Usa o tradutor de erros
             self.handle_db_error(ex, "carregar utilizadores")
         
         self.progress_ring.visible = False
@@ -124,10 +138,8 @@ class AdminView(ft.Column):
 
     def open_add_modal(self, e):
         """(Ainda não implementado)"""
-        # (LOTE 3) - Mantém o snackbar laranja para AVISOS
         self.show_snackbar("Função 'Adicionar' ainda não implementada.", "orange")
 
-    # (LOTE 3, Item 11) - Função de conveniência para mostrar erro
     def show_error(self, message):
         """Exibe o modal de erro global."""
         if self.error_modal:
@@ -135,7 +147,6 @@ class AdminView(ft.Column):
         else:
             print(f"ERRO CRÍTICO (Modal não encontrado): {message}")
             
-    # (LOTE 3, Erro #4) - Função para traduzir erros de DB
     def handle_db_error(self, ex, context=""):
         """Traduz erros comuns do Supabase/PostgREST para mensagens amigáveis."""
         msg = str(ex)
@@ -143,6 +154,9 @@ class AdminView(ft.Column):
         
         if "fetch failed" in msg or "Connection refused" in msg:
             self.show_error("Erro de Rede: Não foi possível conectar ao banco de dados. Verifique sua internet.")
+        # (NOVO) - Captura o erro de chave de API inválida
+        elif "Invalid API key" in msg or "invalid JWT" in msg:
+             self.show_error("Erro de Autenticação de Admin: A Chave de Serviço (service_role) está incorreta. Verifique o ficheiro supabase_client.py.")
         else:
             self.show_error(f"Erro inesperado ao {context}: {msg}")
 
@@ -153,7 +167,6 @@ class AdminView(ft.Column):
         self.page.update()
 
 # --- Função de Nível Superior (Obrigatória) ---
-# (LOTE 3, Item 11) - Aceita o error_modal
 def create_admin_view(page: ft.Page, error_modal=None):
     """
     Exporta a nossa AdminView como um controlo Flet padrão.

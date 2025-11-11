@@ -1,5 +1,5 @@
 # views/ncs_view.py
-# (Versão 17.2 - Lote 5: Máscara de Moeda Automática)
+# (Versão 17.3 - Lote 5.4: Corrige "AssertionError")
 
 import flet as ft
 from supabase_client import supabase # Cliente 'anon'
@@ -13,10 +13,11 @@ import re
 class NcsView(ft.Column):
     """
     Representa o conteúdo da aba Notas de Crédito (CRUD).
-    Versão 17.2 (Lote 5):
-    - (Item 1) ADICIONA MÁSCARA DE MOEDA: Formata campos de valor automaticamente
-      (ex: 1234 -> 12,34) ao digitar.
-    - (BUGFIX) Move 'max_length' do InputFilter para o TextField.
+    Versão 17.3 (Lote 5.4):
+    - (BUGFIX) Corrige "AssertionError" ao carregar filtros.
+    - Chamadas de 'load_filter_options' e 'load_ncs_data' movidas
+      do '__init__' para o novo evento 'on_mount'.
+    - (Item 1) ADICIONA MÁSCARA DE MOEDA
     """
     
     def __init__(self, page, on_data_changed=None, error_modal=None):
@@ -53,9 +54,8 @@ class NcsView(ft.Column):
             border_radius=8,
         )
 
-        # --- Modais: Controlos (Lote 5 - ATUALIZADO) ---
+        # --- Modais: Controlos (Lote 5) ---
         
-        # (LOTE 3.3)
         self.modal_txt_numero_nc = ft.TextField(
             label="Número da NC (6 dígitos)", 
             prefix_text="2025NC",
@@ -87,12 +87,11 @@ class NcsView(ft.Column):
             last_date=datetime(2030, 12, 31)
         )
         
-        # (LOTE 5) - ATUALIZADO: Remove input_filter, adiciona on_change
         self.modal_txt_valor_inicial = ft.TextField(
             label="Valor Inicial", 
             prefix="R$", 
-            on_change=self.format_currency_input, # <-- NOVO
-            keyboard_type=ft.KeyboardType.NUMBER   # <-- NOVO
+            on_change=self.format_currency_input, 
+            keyboard_type=ft.KeyboardType.NUMBER   
         )
         
         self.modal_txt_ptres = ft.TextField(label="PTRES", width=150)
@@ -114,12 +113,11 @@ class NcsView(ft.Column):
         self.recolhimento_modal_title = ft.Text("Recolher Saldo da NC")
         self.modal_rec_data = ft.TextField(label="Data do Recolhimento", hint_text="AAAA-MM-DD", autofocus=True)
         
-        # (LOTE 5) - ATUALIZADO: Remove input_filter, adiciona on_change
         self.modal_rec_valor = ft.TextField(
             label="Valor Recolhido", 
             prefix="R$", 
-            on_change=self.format_currency_input, # <-- NOVO
-            keyboard_type=ft.KeyboardType.NUMBER   # <-- NOVO
+            on_change=self.format_currency_input, 
+            keyboard_type=ft.KeyboardType.NUMBER   
         )
         
         self.modal_rec_descricao = ft.TextField(label="Descrição (Opcional)")
@@ -259,6 +257,19 @@ class NcsView(ft.Column):
         self.page.overlay.append(self.date_picker_recebimento) 
         self.page.overlay.append(self.date_picker_validade)   
         
+        # --- (CORREÇÃO LOTE 5.4) ---
+        # 1. Adicionamos o evento 'on_mount'
+        self.on_mount = self.on_view_mount
+        
+        # 2. As chamadas de 'load' foram MOVIDAS
+        # self.load_filter_options()
+        # self.load_ncs_data()
+        # --- FIM DA CORREÇÃO ---
+        
+    # --- (NOVA FUNÇÃO LOTE 5.4) ---
+    def on_view_mount(self, e):
+        """Chamado pelo Flet DEPOIS que o controlo é adicionado à página."""
+        print("NcsView: Controlo montado. A carregar dados...")
         self.load_filter_options()
         self.load_ncs_data()
         
@@ -307,12 +318,11 @@ class NcsView(ft.Column):
         except (ValueError, TypeError): 
             return "0,00"
             
-    # (LOTE 5) - NOVA FUNÇÃO
+    # (LOTE 5)
     def format_currency_input(self, e: ft.ControlEvent):
         """Formata o valor monetário_automaticamente ao digitar."""
         try:
             current_value = e.control.value or ""
-            # 1. Limpa tudo que não for dígito
             digits = "".join(filter(str.isdigit, current_value))
 
             if not digits:
@@ -320,26 +330,16 @@ class NcsView(ft.Column):
                 if self.page: self.page.update()
                 return
 
-            # 2. Converte para número (ex: "123456" -> 123456)
             int_value = int(digits)
-
-            # 3. Formata como moeda (ex: 123456 -> 1234.56 -> "1.234,56")
             val_float = int_value / 100.0
-            
-            # Formata para "1.234,56" (Padrão BR)
             formatted_value = f"{val_float:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
             
-            # 4. Atualizar o campo
             if e.control.value != formatted_value:
                 e.control.value = formatted_value
-                
-                # (Nota: Flet pode mover o cursor. Esta é uma limitação
-                # conhecida ao reformatar o valor via on_change.)
                 e.control.update()
                 
         except Exception as ex:
             print(f"Erro ao formatar moeda: {ex}")
-            # Mantém o valor como está se a formatação falhar
             
     def open_datepicker(self, picker: ft.DatePicker):
         if picker and self.page: 
@@ -391,9 +391,20 @@ class NcsView(ft.Column):
                     for nd in sorted(nds.data):
                          if nd: self.filtro_nd.options.append(ft.dropdown.Option(text=nd, key=nd))
                 print("Filtro ND atualizado.")
+                
             self.filtro_nd.disabled = False 
-            self.update() 
+            
+            # (CORREÇÃO LOTE 5.4)
+            if pi_selecionado is None:
+                self.update() 
+                
         except Exception as ex: 
+            # (NOVO) Adiciona traceback para debug
+            import traceback
+            print("--- ERRO CRÍTICO (TRACEBACK) NO NCS [load_filter_options] ---")
+            traceback.print_exc()
+            print("---------------------------------------------------------------")
+            
             print(f"Erro ao carregar opções de filtro: {ex}")
             self.handle_db_error(ex, "carregar filtros")
             
@@ -419,7 +430,10 @@ class NcsView(ft.Column):
     def load_ncs_data(self):
         print("NCs: A carregar dados com filtros...")
         self.progress_ring.visible = True
+        
+        # (CORREÇÃO LOTE 5.4) - É seguro chamar 'update()'
         self.page.update()
+        
         try:
             query = supabase.table('ncs_com_saldos').select('id, numero_nc, pi, natureza_despesa, status_calculado, valor_inicial, saldo_disponivel, data_validade_empenho, data_recebimento, ptres, fonte, ug_gestora, observacao')
             if self.filtro_pesquisa_nc.value: 
@@ -471,6 +485,12 @@ class NcsView(ft.Column):
                 )
             print("NCs: Dados carregados com sucesso.")
         except Exception as ex: 
+            # (NOVO) Adiciona traceback para debug
+            import traceback
+            print("--- ERRO CRÍTICO (TRACEBACK) NO NCS [load_ncs_data] ---")
+            traceback.print_exc()
+            print("---------------------------------------------------------")
+            
             print(f"Erro ao carregar NCs: {ex}")
             self.handle_db_error(ex, "carregar NCs")
             
@@ -517,10 +537,7 @@ class NcsView(ft.Column):
         
         self.modal_txt_data_recebimento.value = nc.get('data_recebimento', '')
         self.modal_txt_data_validade.value = nc.get('data_validade_empenho', '')
-        
-        # (LOTE 5) - Garante que o valor vindo do DB (float) é formatado para o campo (string "0,00")
         self.modal_txt_valor_inicial.value = self.formatar_valor_para_campo(nc.get('valor_inicial'))
-        
         self.modal_txt_ptres.value = nc.get('ptres', '')
         self.modal_txt_nd.value = nc.get('natureza_despesa', '')
         self.modal_txt_fonte.value = nc.get('fonte', '')
@@ -543,7 +560,7 @@ class NcsView(ft.Column):
         self.page.update()
 
     def save_nc(self, e):
-        """ Salva (INSERT) ou Atualiza (UPDATE) uma NC (V17.2). """
+        """ Salva (INSERT) ou Atualiza (UPDATE) uma NC (V17.3). """
         
         # 1. Validação
         try:
@@ -570,10 +587,7 @@ class NcsView(ft.Column):
                 self.modal_form.update()
                 return
 
-            # (LOTE 5) - O valor já está formatado ("1.234,56").
-            # A lógica de limpeza continua a mesma e funciona.
             valor_limpo = self.modal_txt_valor_inicial.value.replace(".", "").replace(",", ".")
-            
             numero_formatado = f"2025NC{self.modal_txt_numero_nc.value.strip().upper()}"
             
             dados_para_salvar = {
@@ -726,8 +740,6 @@ class NcsView(ft.Column):
                 self.recolhimento_modal.update()
                 return
             
-            # (LOTE 5) - O valor já está formatado ("1.234,56").
-            # A lógica de limpeza continua a mesma e funciona.
             valor_limpo = self.modal_rec_valor.value.replace(".", "").replace(",", ".")
             dados_para_inserir = {
                 "id_nc": self.id_nc_para_recolhimento, 
@@ -945,11 +957,8 @@ class NcsView(ft.Column):
             self.modal_txt_data_validade.value = dados_nc['data_validade']
             
         if dados_nc.get('valor_inicial'):
-            # (LOTE 5) - O valor do PDF (ex: "1.234,56") é limpo para
-            # acionar o format_currency_input corretamente (ou ser formatado)
             valor_pdf_limpo = dados_nc['valor_inicial'].replace(".", "").replace(",", "")
             self.modal_txt_valor_inicial.value = valor_pdf_limpo
-            # Força a formatação imediata
             self.format_currency_input(ft.ControlEvent(target=self.modal_txt_valor_inicial, name="change", data=valor_pdf_limpo, control=self.modal_txt_valor_inicial, page=self.page))
             
         if dados_nc.get('ptres'):

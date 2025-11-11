@@ -1,11 +1,14 @@
 # main.py
-# (Versão Lote 3.2 - Corrige o bug 'ft.icons' (Tentativa 3))
+# (Versão Lote 5.2 - Adiciona Traceback de Erro no Login)
 
 import flet as ft
 # Importa AMBOS os clientes
 from supabase_client import supabase, supabase_admin 
 # Importação correta da biblioteca de auth
 from supabase_auth.errors import AuthApiError 
+
+# (NOVO) - Importa traceback
+import traceback
 
 # Importa as nossas "views" (abas)
 from views.dashboard_view import create_dashboard_view
@@ -243,7 +246,15 @@ def main(page: ft.Page):
             # (LOTE 3) - Usa o novo modal
             error_modal_global.show(f"Utilizador ou senha inválidos.")
         except Exception as ex:
-            print(f"Erro inesperado: {ex}")
+            # --- (LOTE 5.2) MUDANÇA IMPORTANTE ---
+            # Se o show_main_layout() falhar (ex: crash do AdminView),
+            # este 'except' vai apanhar.
+            # Vamos imprimir o traceback completo.
+            print("--- ERRO CRÍTICO INESPERADO (TRACEBACK) ---")
+            traceback.print_exc() # <-- NOVO
+            print("---------------------------------------------")
+            # --- FIM DA MUDANÇA ---
+            
             username_field.disabled = False
             password_field.disabled = False
             # (LOTE 3) - Usa o novo modal

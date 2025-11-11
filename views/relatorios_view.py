@@ -1,10 +1,11 @@
 # views/relatorios_view.py
-# (Versão 4.0 - Lote 3 Revisado: Corrige ErrorModal e Layout PDF)
+# (Versão 4.1 - Lote 5.4: Corrige "AssertionError")
 
 import flet as ft
 from supabase_client import supabase # Cliente 'anon'
 from datetime import datetime, date
 import pandas as pd
+import traceback # <-- (NOVO) ADICIONADO PARA DEBUG
 
 # (LOTE 3, Item 6) - Importações necessárias do ReportLab para quebra de texto
 from reportlab.lib.pagesizes import letter, landscape
@@ -17,19 +18,20 @@ from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_LEFT # (LOTE 3)
 class RelatoriosView(ft.Column):
     """
     Representa o conteúdo da aba Relatórios.
-    Versão 4.0 (Lote 3 Revisado):
+    Versão 4.1 (Lote 5.4):
+    - (BUGFIX) Corrige "AssertionError" ao carregar filtros.
+    - Chamada de 'load_all_filters' movida do '__init__' para 'on_mount'.
     - (Item 11) Substitui show_snackbar pelo novo self.error_modal.
     - (Item 6) Corrige layout quebrado de PDFs (quebra de linha automática).
     """
     
-    # (LOTE 3, Item 11) - Aceita o error_modal
     def __init__(self, page, error_modal=None):
         super().__init__()
         self.page = page
         self.alignment = ft.MainAxisAlignment.START
         self.spacing = 20
         self.padding = 20
-        self.error_modal = error_modal # (LOTE 3)
+        self.error_modal = error_modal
         
         self.progress_ring = ft.ProgressRing(visible=False, width=32, height=32)
 
@@ -104,13 +106,24 @@ class RelatoriosView(ft.Column):
             ft.Row([self.btn_gerar_excel_extrato, self.btn_gerar_pdf_extrato], alignment=ft.MainAxisAlignment.CENTER),
         ]
 
+        # --- (CORREÇÃO LOTE 5.4) ---
+        # 1. Adicionamos o evento 'on_mount'
+        self.on_mount = self.on_view_mount
+        
+        # 2. As chamadas de 'load' foram MOVIDAS
+        # self.load_all_filters()
+        # --- FIM DA CORREÇÃO ---
+        
+    # --- (NOVA FUNÇÃO LOTE 5.4) ---
+    def on_view_mount(self, e):
+        """Chamado pelo Flet DEPOIS que o controlo é adicionado à página."""
+        print("RelatoriosView: Controlo montado. A carregar dados...")
         self.load_all_filters()
         
     # -----------------------------------------------------------------
     # INÍCIO DO BLOCO DE MÉTODOS (Tudo indentado dentro da classe)
     # -----------------------------------------------------------------
 
-    # (LOTE 3, Item 11) - Função de conveniência para mostrar erro
     def show_error(self, message):
         """Exibe o modal de erro global."""
         if self.error_modal:
@@ -118,7 +131,6 @@ class RelatoriosView(ft.Column):
         else:
             print(f"ERRO CRÍTICO (Modal não encontrado): {message}")
             
-    # (LOTE 3, Erro #4) - Função para traduzir erros de DB
     def handle_db_error(self, ex, context=""):
         """Traduz erros comuns do Supabase/PostgREST para mensagens amigáveis."""
         msg = str(ex)
@@ -210,8 +222,19 @@ class RelatoriosView(ft.Column):
                     for nd in sorted(nds.data):
                          if nd: self.filtro_nd.options.append(ft.dropdown.Option(text=nd, key=nd))
                 print("Relatórios: Filtro ND atualizado.")
-            self.filtro_nd.disabled = False; self.update()
+                
+            self.filtro_nd.disabled = False
+            
+            # (CORREÇÃO LOTE 5.4)
+            if pi_selecionado is None:
+                self.update()
+                
         except Exception as ex: 
+            # (NOVO) Adiciona traceback para debug
+            print("--- ERRO CRÍTICO (TRACEBACK) NO RELATORIOS [load_filter_options] ---")
+            traceback.print_exc()
+            print("---------------------------------------------------------------------")
+            
             print(f"Erro ao carregar opções de filtro nos Relatórios: {ex}")
             self.handle_db_error(ex, "carregar filtros de PI/ND")
 
@@ -307,6 +330,11 @@ class RelatoriosView(ft.Column):
             self.update()
 
         except Exception as ex:
+            # (NOVO) Adiciona traceback para debug
+            print("--- ERRO CRÍTICO (TRACEBACK) NO RELATORIOS [load_nc_list_for_statement_filter] ---")
+            traceback.print_exc()
+            print("----------------------------------------------------------------------------------")
+            
             print(f"Erro ao carregar NCs para filtro de extrato: {ex}")
             self.handle_db_error(ex, "carregar lista de NCs")
             
@@ -421,7 +449,6 @@ class RelatoriosView(ft.Column):
             print(f"A salvar relatório ({self.tipo_ficheiro_a_salvar}) em: {caminho_salvar}")
             
             try:
-                # (LOTE 3, Item 6) - Preparar Estilos de Parágrafo
                 styles = getSampleStyleSheet()
                 style_normal = styles['Normal']
                 style_normal.alignment = TA_LEFT
@@ -563,7 +590,6 @@ class RelatoriosView(ft.Column):
                 self.progress_ring.visible = False
                 self.page.update()
         else:
-            # Salvar cancelado (e.path é None) ou dados em falta
             print("Salvar cancelado/dados em falta.")
             self.dados_relatorio_para_salvar = None
             self.tipo_ficheiro_a_salvar = None

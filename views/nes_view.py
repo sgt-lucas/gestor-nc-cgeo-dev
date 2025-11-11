@@ -1,30 +1,26 @@
 # views/nes_view.py
-# (Versão 7.2 - Lote 5: Máscara de Moeda Automática)
+# (Versão 7.3 - Lote 5.4: Corrige "AssertionError")
 
 import flet as ft
 from supabase_client import supabase # Cliente 'anon'
 from datetime import datetime
+import traceback # <-- (NOVO) ADICIONADO PARA DEBUG
 
 class NesView(ft.Column):
     """
     Representa o conteúdo da aba Notas de Empenho (CRUD).
-    Versão 7.2 (Lote 5):
-    - (Item 1) ADICIONA MÁSCARA DE MOEDA: Formata 'Valor Empenhado' automaticamente.
-    - (BUGFIX) Move 'max_length' do InputFilter para o TextField.
-    - (Erro #3) ADICIONA VALIDAÇÃO DE SALDO: Impede NE com valor maior que o saldo da NC.
-    - (Item 11) Substitui show_snackbar pelo novo self.error_modal.
-    - (Item 11 / Erro #4) Adiciona 'handle_db_error' para traduzir erros.
-    - (Erro #1, #2) Adiciona prefixo "2025NE" e filtro de 6 dígitos no modal.
+    Versão 7.3 (Lote 5.4):
+    - (BUGFIX) Corrige "AssertionError" ao carregar filtros.
+    - Chamadas de 'load_...' movidas do '__init__' para 'on_mount'.
+    - (Item 1) ADICIONA MÁSCARA DE MOEDA
     """
-    # (LOTE 3, Item 11) - Aceita o error_modal
     def __init__(self, page, on_data_changed=None, error_modal=None):
         super().__init__()
         self.page = page
         self.id_ne_sendo_editada = None
         self.on_data_changed_callback = on_data_changed
-        self.error_modal = error_modal # (LOTE 3)
+        self.error_modal = error_modal 
         
-        # (LOTE 3, Erro #3) - Dicionário para guardar saldos das NCs ativas
         self.saldos_ncs_ativas = {}
         
         self.alignment = ft.MainAxisAlignment.START
@@ -49,10 +45,9 @@ class NesView(ft.Column):
             border_radius=8,
         )
 
-        # --- Modais (Lote 5 - ATUALIZADO) ---
+        # --- Modais (Lote 5) ---
         self.modal_dropdown_nc = ft.Dropdown(label="Vincular à NC (Obrigatório)")
         
-        # (LOTE 3.3)
         self.modal_txt_numero_ne = ft.TextField(
             label="Número da NE (6 dígitos)", 
             prefix_text="2025NE",
@@ -78,12 +73,11 @@ class NesView(ft.Column):
             last_date=datetime(2030, 12, 31)
         )
         
-        # (LOTE 5) - ATUALIZADO: Remove input_filter, adiciona on_change
         self.modal_txt_valor_empenhado = ft.TextField(
             label="Valor Empenhado", 
             prefix="R$", 
-            on_change=self.format_currency_input, # <-- NOVO
-            keyboard_type=ft.KeyboardType.NUMBER   # <-- NOVO
+            on_change=self.format_currency_input, 
+            keyboard_type=ft.KeyboardType.NUMBER   
         )
         
         self.modal_txt_descricao = ft.TextField(label="Descrição (Opcional)")
@@ -198,6 +192,20 @@ class NesView(ft.Column):
         self.page.overlay.append(self.confirm_delete_dialog)
         self.page.overlay.append(self.date_picker_empenho) 
         
+        # --- (CORREÇÃO LOTE 5.4) ---
+        # 1. Adicionamos o evento 'on_mount'
+        self.on_mount = self.on_view_mount
+        
+        # 2. As chamadas de 'load' foram MOVIDAS
+        # self.load_nc_filter_options()
+        # self.load_pi_nd_filter_options() 
+        # self.load_nes_data()
+        # --- FIM DA CORREÇÃO ---
+
+    # --- (NOVA FUNÇÃO LOTE 5.4) ---
+    def on_view_mount(self, e):
+        """Chamado pelo Flet DEPOIS que o controlo é adicionado à página."""
+        print("NesView: Controlo montado. A carregar dados...")
         self.load_nc_filter_options()
         self.load_pi_nd_filter_options() 
         self.load_nes_data()
@@ -217,7 +225,6 @@ class NesView(ft.Column):
         e.control.open = False
         self.modal_txt_data_empenho.update()
 
-    # (LOTE 3, Item 11) - Função de conveniência para mostrar erro
     def show_error(self, message):
         """Exibe o modal de erro global."""
         if self.error_modal:
@@ -225,7 +232,6 @@ class NesView(ft.Column):
         else:
             print(f"ERRO CRÍTICO (Modal não encontrado): {message}")
             
-    # (LOTE 3, Erro #4) - Função para traduzir erros de DB
     def handle_db_error(self, ex, context=""):
         """Traduz erros comuns do Supabase/PostgREST para mensagens amigáveis."""
         msg = str(ex)
@@ -260,12 +266,11 @@ class NesView(ft.Column):
         except (ValueError, TypeError):
             return "0,00"
             
-    # (LOTE 5) - NOVA FUNÇÃO
+    # (LOTE 5)
     def format_currency_input(self, e: ft.ControlEvent):
         """Formata o valor monetário_automaticamente ao digitar."""
         try:
             current_value = e.control.value or ""
-            # 1. Limpa tudo que não for dígito
             digits = "".join(filter(str.isdigit, current_value))
 
             if not digits:
@@ -273,26 +278,16 @@ class NesView(ft.Column):
                 if self.page: self.page.update()
                 return
 
-            # 2. Converte para número (ex: "123456" -> 123456)
             int_value = int(digits)
-
-            # 3. Formata como moeda (ex: 123456 -> 1234.56 -> "1.234,56")
             val_float = int_value / 100.0
-            
-            # Formata para "1.234,56" (Padrão BR)
             formatted_value = f"{val_float:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
             
-            # 4. Atualizar o campo
             if e.control.value != formatted_value:
                 e.control.value = formatted_value
-                
-                # (Nota: Flet pode mover o cursor. Esta é uma limitação
-                # conhecida ao reformatar o valor via on_change.)
                 e.control.update()
                 
         except Exception as ex:
             print(f"Erro ao formatar moeda: {ex}")
-            # Mantém o valor como está se a formatação falhar
 
     def load_nc_filter_options(self):
         """
@@ -320,6 +315,11 @@ class NesView(ft.Column):
             self.update()
 
         except Exception as ex:
+            # (NOVO) Adiciona traceback para debug
+            print("--- ERRO CRÍTICO (TRACEBACK) NO NES [load_nc_filter_options] ---")
+            traceback.print_exc()
+            print("----------------------------------------------------------------")
+            
             print(f"Erro ao carregar NCs para filtro: {ex}")
             self.handle_db_error(ex, "carregar filtros de NC")
 
@@ -352,9 +352,19 @@ class NesView(ft.Column):
                     for nd in sorted(nds.data):
                          if nd: self.filtro_nd.options.append(ft.dropdown.Option(text=nd, key=nd))
                 print("NEs: Filtro ND atualizado.")
+                
             self.filtro_nd.disabled = False 
-            self.update() 
+            
+            # (CORREÇÃO LOTE 5.4)
+            if pi_selecionado is None:
+                self.update() 
+                
         except Exception as ex: 
+            # (NOVO) Adiciona traceback para debug
+            print("--- ERRO CRÍTICO (TRACEBACK) NO NES [load_pi_nd_filter_options] ---")
+            traceback.print_exc()
+            print("---------------------------------------------------------------------")
+            
             print(f"Erro ao carregar opções de filtro PI/ND: {ex}")
             self.handle_db_error(ex, "carregar filtros PI/ND")
 
@@ -370,6 +380,8 @@ class NesView(ft.Column):
     def load_nes_data(self):
         print("NEs: A carregar dados com filtros...")
         self.progress_ring.visible = True
+        
+        # (CORREÇÃO LOTE 5.4)
         self.page.update()
 
         try:
@@ -433,6 +445,11 @@ class NesView(ft.Column):
             print("NEs: Dados carregados com sucesso.")
 
         except Exception as ex:
+            # (NOVO) Adiciona traceback para debug
+            print("--- ERRO CRÍTICO (TRACEBACK) NO NES [load_nes_data] ---")
+            traceback.print_exc()
+            print("---------------------------------------------------------")
+            
             print(f"Erro ao carregar NEs: {ex}")
             self.handle_db_error(ex, "carregar Notas de Empenho")
         
@@ -449,19 +466,17 @@ class NesView(ft.Column):
         self.load_nes_data()
         self.page.update()
 
-    # (LOTE 3, Erro #3) - Atualizado para guardar os saldos
     def carregar_ncs_para_dropdown_modal(self):
         """Busca NCs 'Ativas' para o dropdown do MODAL e armazena seus saldos."""
         print("NEs Modal: A carregar NCs ativas...")
         try:
-            # Seleciona o ID e o Saldo
             resposta_ncs = supabase.table('ncs_com_saldos') \
                                    .select('id, numero_nc, saldo_disponivel') \
                                    .filter('status_calculado', 'eq', 'Ativa') \
                                    .execute()
             
             self.modal_dropdown_nc.options.clear()
-            self.saldos_ncs_ativas.clear() # Limpa o cache de saldos
+            self.saldos_ncs_ativas.clear() 
             
             if not resposta_ncs.data:
                 self.page.snack_bar = ft.SnackBar(ft.Text("Nenhuma NC 'Ativa' encontrada para vincular."), bgcolor="orange")
@@ -477,7 +492,6 @@ class NesView(ft.Column):
                 self.modal_dropdown_nc.options.append(
                     ft.dropdown.Option(key=nc['id'], text=texto_opcao)
                 )
-                # (LOTE 3, Erro #3) - Armazena o saldo para validação futura
                 self.saldos_ncs_ativas[nc['id']] = saldo_float
                 
             return True
@@ -520,10 +534,7 @@ class NesView(ft.Column):
         self.modal_txt_numero_ne.value = numero_ne_sem_prefixo
         
         self.modal_txt_data_empenho.value = ne['data_empenho']
-        
-        # (LOTE 5) - Garante que o valor vindo do DB (float) é formatado para o campo (string "0,00")
         self.modal_txt_valor_empenhado.value = self.formatar_valor_para_campo(ne['valor_empenhado'])
-        
         self.modal_txt_descricao.value = ne['descricao']
         for campo in [self.modal_dropdown_nc, self.modal_txt_numero_ne, self.modal_txt_data_empenho, self.modal_txt_valor_empenhado]:
             campo.error_text = None
@@ -562,14 +573,11 @@ class NesView(ft.Column):
                 self.modal_form.update()
                 return 
             
-            # (LOTE 5) - O valor já está formatado ("1.234,56").
-            # A lógica de limpeza continua a mesma e funciona.
             valor_limpo_str = self.modal_txt_valor_empenhado.value.replace(".", "").replace(",", ".")
             valor_empenhado_float = float(valor_limpo_str)
             id_nc_selecionada = self.modal_dropdown_nc.value
             
-            # (LOTE 3, Erro #3) - Validação de Saldo Negativo
-            if self.id_ne_sendo_editada is None: # Só verifica o saldo ao ADICIONAR
+            if self.id_ne_sendo_editada is None: 
                 if id_nc_selecionada not in self.saldos_ncs_ativas:
                     self.show_error("Erro: NC selecionada não encontrada ou não está ativa. Recarregue a lista.")
                     return
@@ -582,7 +590,6 @@ class NesView(ft.Column):
                     self.modal_txt_valor_empenhado.error_text = "Valor excede o saldo"
                     self.modal_form.update()
                     return
-            # (Fim LOTE 3, Erro #3)
             
             numero_formatado = f"2025NE{self.modal_txt_numero_ne.value.strip().upper()}"
             
@@ -598,13 +605,13 @@ class NesView(ft.Column):
             self.show_error(f"Erro nos dados: {ex_validation}")
             return
 
-        # 2. Feedback de Loading (Lote 2)
+        # 2. Feedback de Loading
         self.modal_form_loading_ring.visible = True
         self.modal_form_btn_cancelar.disabled = True
         self.modal_form_btn_salvar.disabled = True
         self.modal_form.update()
 
-        # 3. Execução (com try/except/finally)
+        # 3. Execução
         try:
             if self.id_ne_sendo_editada is None:
                 print(f"A inserir nova NE no Supabase como: {numero_formatado}...")
@@ -616,12 +623,12 @@ class NesView(ft.Column):
                 msg_sucesso = f"NE {numero_formatado} atualizada com sucesso!"
             
             print("NE salva com sucesso.")
-            self.show_success_snackbar(msg_Gsucesso)
+            self.show_success_snackbar(msg_sucesso)
             
             self.close_modal(None) 
             self.load_nes_data() 
             if self.on_data_changed_callback:
-                self.on_data_changed_callback(None) # Recarrega o Dashboard e NCs
+                self.on_data_changed_callback(None) 
 
         except Exception as ex:
             print(f"Erro ao salvar NE: {ex}")

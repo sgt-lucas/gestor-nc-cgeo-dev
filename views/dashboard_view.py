@@ -1,25 +1,27 @@
 # views/dashboard_view.py
-# (Versão 5.1, Lote 4.1 - Corrige BUG CRÍTICO 'vertical_alignment')
+# (Versão 5.3 - Lote 5.4: Corrige "AssertionError" no Dashboard)
 
 import flet as ft
+import traceback 
 from supabase_client import supabase # Cliente 'anon'
 from datetime import datetime, timedelta
 
 class DashboardView(ft.Column):
     """
     Representa o conteúdo da aba Dashboard.
-    Versão 5.1 (Lote 4.1):
-    - (BUGFIX) Corrige 'vertical_alignment' usado indevidamente em ft.Column.
+    Versão 5.3 (Lote 5.4):
+    - (BUGFIX) Corrige "AssertionError" ao carregar filtros.
+    - 'load_filter_options' e 'load_dashboard_data' agora são chamados
+      pelo 'on_mount' em vez do '__init__'.
     """
     
-    # (LOTE 3, Item 11) - Aceita o error_modal
     def __init__(self, page, error_modal=None):
         super().__init__()
         self.page = page
         self.alignment = ft.MainAxisAlignment.START
         self.spacing = 20
         self.padding = 20
-        self.error_modal = error_modal # (LOTE 3)
+        self.error_modal = error_modal
         
         self.progress_ring = ft.ProgressRing(visible=True, width=32, height=32)
         self.txt_saldo_total = ft.Text("R$ 0,00", size=32, weight=ft.FontWeight.BOLD)
@@ -70,7 +72,7 @@ class DashboardView(ft.Column):
             on_click=self.limpar_filtros
         )
 
-        # --- LAYOUT (LOTE 4.1 - Corrigido) ---
+        # --- LAYOUT (LOTE 5.3 - Corrigido) ---
         self.controls = [
             ft.Row(
                 [
@@ -89,17 +91,17 @@ class DashboardView(ft.Column):
                     ft.Column(col={"sm": 12, "md": 6}, controls=[self.filtro_nd]),
                 ]
             ),
+            
             ft.ResponsiveRow(
                 [
                     ft.Column(col={"sm": 12, "md": 4}, controls=[self.filtro_status]),
                     ft.Column(
                         col={"sm": 12, "md": 2}, 
                         controls=[self.btn_limpar_filtros],
-                        # vertical_alignment REMOVIDO DAQUI (BUG)
                     ),
                 ],
                 alignment=ft.MainAxisAlignment.START,
-                vertical_alignment=ft.CrossAxisAlignment.CENTER # <-- (LOTE 4.1) - CORREÇÃO MOVIDA PARA AQUI
+                vertical_alignment=ft.CrossAxisAlignment.CENTER 
             ),
 
             self.txt_saldo_total,
@@ -111,7 +113,19 @@ class DashboardView(ft.Column):
             )
         ]
 
-        # Carrega filtros e depois os dados
+        # --- (CORREÇÃO LOTE 5.4) ---
+        # 1. Adicionamos o evento 'on_mount'
+        self.on_mount = self.on_view_mount
+        
+        # 2. As chamadas de 'load' foram MOVIDAS
+        # self.load_filter_options()
+        # self.load_dashboard_data(None)
+        # --- FIM DA CORREÇÃO ---
+        
+    # --- (NOVA FUNÇÃO LOTE 5.4) ---
+    def on_view_mount(self, e):
+        """Chamado pelo Flet DEPOIS que o controlo é adicionado à página."""
+        print("DashboardView: Controlo montado. A carregar dados...")
         self.load_filter_options()
         self.load_dashboard_data(None)
         
@@ -175,9 +189,17 @@ class DashboardView(ft.Column):
                 print("Dashboard: Filtro ND atualizado.")
             
             self.filtro_nd.disabled = False
-            self.update() 
+            
+            # (CORREÇÃO LOTE 5.4) - É seguro chamar 'update()'
+            # apenas se NÃO estivermos no 'pi_selecionado' (que já chama update)
+            if pi_selecionado is None:
+                self.update() 
 
         except Exception as ex:
+            print("--- ERRO CRÍTICO (TRACEBACK) NO DASHBOARD [load_filter_options] ---")
+            traceback.print_exc()
+            print("------------------------------------------------------------------")
+            
             print(f"Erro ao carregar opções de filtro no Dashboard: {ex}")
             self.handle_db_error(ex, "carregar filtros do Dashboard")
 
@@ -201,6 +223,9 @@ class DashboardView(ft.Column):
         """
         print("Dashboard: A carregar dados com filtros...")
         self.progress_ring.visible = True
+        
+        # (CORREÇÃO LOTE 5.4) - É seguro chamar 'update()'
+        # porque 'load_dashboard_data' só é chamado 'on_mount'.
         self.page.update()
 
         try:
@@ -263,6 +288,10 @@ class DashboardView(ft.Column):
             print("Dashboard: Dados carregados com sucesso.")
 
         except Exception as ex:
+            print("--- ERRO CRÍTICO (TRACEBACK) NO DASHBOARD [load_dashboard_data] ---")
+            traceback.print_exc()
+            print("-------------------------------------------------------------------")
+            
             print(f"Erro ao carregar dashboard: {ex}")
             self.handle_db_error(ex, "carregar dados do Dashboard")
         
