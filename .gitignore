@@ -1,0 +1,14 @@
+# Ambiente Virtual (pasta venv)
+venv/
+
+# Ficheiro de chaves secretas
+# NUNCA envie este ficheiro para o GitHub!
+supabase_client.py
+
+# Caches do Python
+__pycache__/
+*.pyc
+
+# Ficheiros de IDE (se usar)
+.vscode/
+.idea/
