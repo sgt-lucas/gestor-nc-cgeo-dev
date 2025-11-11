@@ -1,5 +1,5 @@
 # views/admin_view.py
-# (Versão 7.0 - Usa o cliente 'supabase' normal, confiando no RLS V13)
+# (Versão 8.0 - Lote 3 Revisado: Implementa ErrorModal)
 
 import flet as ft
 # Importamos AMBOS os clientes
@@ -9,15 +9,19 @@ from supabase_auth.errors import AuthApiError
 class AdminView(ft.Column):
     """
     Representa o conteúdo da aba Administração.
-    Versão 7.0: Usa o cliente 'supabase' (não-admin) para ler,
-    confiando na política RLS "Admins podem LER TODOS os perfis".
+    Versão 8.0 (Lote 3 Revisado):
+    - (Item 11) Substitui show_snackbar (para erros) pelo novo self.error_modal.
+    - (Item 11 / Erro #4) Adiciona 'handle_db_error' para traduzir erros.
     """
-    def __init__(self, page):
+    
+    # (LOTE 3, Item 11) - Aceita o error_modal
+    def __init__(self, page, error_modal=None):
         super().__init__()
         self.page = page
         self.alignment = ft.MainAxisAlignment.START
         self.spacing = 20
         self.padding = 20
+        self.error_modal = error_modal # (LOTE 3)
         
         self.progress_ring = ft.ProgressRing(visible=True, width=32, height=32)
         
@@ -74,10 +78,6 @@ class AdminView(ft.Column):
         self.update()
         
         try:
-            # --- CORREÇÃO (V7): Usando o cliente 'supabase' (não-admin) ---
-            # A nossa política SQL V13 "Admins podem LER TODOS os perfis"
-            # permite que esta chamada funcione para admins.
-            
             resposta_perfis = supabase.table('perfis_usuarios').select('*').execute()
             
             self.tabela_users.rows.clear()
@@ -116,24 +116,46 @@ class AdminView(ft.Column):
             print(f"Erro CRÍTICO ao carregar perfis: {ex}") 
             import traceback
             traceback.print_exc()
-            self.show_snackbar(f"Erro ao carregar utilizadores: {ex}")
+            # (LOTE 3, Erro #4) - Usa o tradutor de erros
+            self.handle_db_error(ex, "carregar utilizadores")
         
         self.progress_ring.visible = False
         self.update()
 
     def open_add_modal(self, e):
         """(Ainda não implementado)"""
+        # (LOTE 3) - Mantém o snackbar laranja para AVISOS
         self.show_snackbar("Função 'Adicionar' ainda não implementada.", "orange")
 
+    # (LOTE 3, Item 11) - Função de conveniência para mostrar erro
+    def show_error(self, message):
+        """Exibe o modal de erro global."""
+        if self.error_modal:
+            self.error_modal.show(message)
+        else:
+            print(f"ERRO CRÍTICO (Modal não encontrado): {message}")
+            
+    # (LOTE 3, Erro #4) - Função para traduzir erros de DB
+    def handle_db_error(self, ex, context=""):
+        """Traduz erros comuns do Supabase/PostgREST para mensagens amigáveis."""
+        msg = str(ex)
+        print(f"Erro de DB Bruto ({context}): {msg}") # Manter no log
+        
+        if "fetch failed" in msg or "Connection refused" in msg:
+            self.show_error("Erro de Rede: Não foi possível conectar ao banco de dados. Verifique sua internet.")
+        else:
+            self.show_error(f"Erro inesperado ao {context}: {msg}")
+
     def show_snackbar(self, message, color="red"):
-        """Mostra uma mensagem de feedback."""
+        """Mostra uma mensagem de feedback (Usado apenas para AVISOS)."""
         self.page.snack_bar = ft.SnackBar(ft.Text(message), bgcolor=color)
         self.page.snack_bar.open = True
         self.page.update()
 
 # --- Função de Nível Superior (Obrigatória) ---
-def create_admin_view(page: ft.Page):
+# (LOTE 3, Item 11) - Aceita o error_modal
+def create_admin_view(page: ft.Page, error_modal=None):
     """
     Exporta a nossa AdminView como um controlo Flet padrão.
     """
-    return AdminView(page)
+    return AdminView(page, error_modal=error_modal)

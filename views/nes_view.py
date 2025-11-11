@@ -1,5 +1,5 @@
 # views/nes_view.py
-# (Versão 3, com filtros)
+# (Versão 7.1, Lote 3.3 - Corrige Saldo Negativo, Prefixo, Erros e max_length)
 
 import flet as ft
 from supabase_client import supabase # Cliente 'anon'
@@ -8,16 +8,26 @@ from datetime import datetime
 class NesView(ft.Column):
     """
     Representa o conteúdo da aba Notas de Empenho (CRUD).
-    Versão 3: Adiciona funcionalidade de FILTROS.
+    Versão 7.1 (Lote 3.3):
+    - (BUGFIX) Move 'max_length' do InputFilter para o TextField.
+    - (Erro #3) ADICIONA VALIDAÇÃO DE SALDO: Impede NE com valor maior que o saldo da NC.
+    - (Item 11) Substitui show_snackbar pelo novo self.error_modal.
+    - (Item 11 / Erro #4) Adiciona 'handle_db_error' para traduzir erros.
+    - (Erro #1, #2) Adiciona prefixo "2025NE" e filtro de 6 dígitos no modal.
     """
-    def __init__(self, page):
+    # (LOTE 3, Item 11) - Aceita o error_modal
+    def __init__(self, page, on_data_changed=None, error_modal=None):
         super().__init__()
         self.page = page
         self.id_ne_sendo_editada = None
+        self.on_data_changed_callback = on_data_changed
+        self.error_modal = error_modal # (LOTE 3)
+        
+        # (LOTE 3, Erro #3) - Dicionário para guardar saldos das NCs ativas
+        self.saldos_ncs_ativas = {}
         
         self.alignment = ft.MainAxisAlignment.START
         self.spacing = 20
-        # (Corrigido para o formato Flet)
         self.padding = 20
 
         self.progress_ring = ft.ProgressRing(visible=True, width=32, height=32)
@@ -38,12 +48,41 @@ class NesView(ft.Column):
             border_radius=8,
         )
 
-        # --- Modais (Adição/Edição e Exclusão) ---
+        # --- Modais (Lote 3.3 - CORRIGIDO) ---
         self.modal_dropdown_nc = ft.Dropdown(label="Vincular à NC (Obrigatório)")
-        self.modal_txt_numero_ne = ft.TextField(label="Número NE", hint_text="Ex: 2025NE000123")
-        self.modal_txt_data_empenho = ft.TextField(label="Data Empenho", hint_text="AAAA-MM-DD")
+        
+        # (LOTE 3.3) - CORREÇÃO DO BUG 'max_length'
+        self.modal_txt_numero_ne = ft.TextField(
+            label="Número da NE (6 dígitos)", 
+            prefix_text="2025NE",
+            input_filter=ft.InputFilter(r"[0-9]"), # <-- max_length REMOVIDO DAQUI
+            max_length=6,                           # <-- max_length MOVIDO PARA AQUI
+            keyboard_type=ft.KeyboardType.NUMBER
+        )
+        
+        self.modal_txt_data_empenho = ft.TextField(
+            label="Data Empenho", 
+            hint_text="AAAA-MM-DD", 
+            read_only=True, 
+            expand=True
+        )
+        self.btn_abrir_data_empenho = ft.IconButton(
+            icon="CALENDAR_MONTH", 
+            tooltip="Selecionar Data", 
+            on_click=lambda e: self.open_datepicker(self.date_picker_empenho)
+        )
+        self.date_picker_empenho = ft.DatePicker(
+            on_change=self.handle_date_empenho_change,
+            first_date=datetime(2020, 1, 1),
+            last_date=datetime(2030, 12, 31)
+        )
+        
         self.modal_txt_valor_empenhado = ft.TextField(label="Valor Empenhado", prefix="R$", input_filter=ft.InputFilter(r"[0-9.,]"))
         self.modal_txt_descricao = ft.TextField(label="Descrição (Opcional)")
+        
+        self.modal_form_loading_ring = ft.ProgressRing(visible=False, width=24, height=24)
+        self.modal_form_btn_cancelar = ft.TextButton("Cancelar", on_click=self.close_modal)
+        self.modal_form_btn_salvar = ft.ElevatedButton("Salvar", on_click=self.save_ne, icon="SAVE")
         
         self.modal_form = ft.AlertDialog(
             modal=True, title=ft.Text("Adicionar Nova Nota de Empenho"),
@@ -51,14 +90,24 @@ class NesView(ft.Column):
                 [
                     self.modal_dropdown_nc,
                     self.modal_txt_numero_ne,
-                    self.modal_txt_data_empenho,
+                    ft.Row(
+                        [
+                            self.modal_txt_data_empenho, 
+                            self.btn_abrir_data_empenho
+                        ], 
+                        spacing=10
+                    ),
                     self.modal_txt_valor_empenhado,
                     self.modal_txt_descricao,
-                ], height=400, width=500, scroll=ft.ScrollMode.ADAPTIVE,
+                ], 
+                height=450,
+                width=500, 
+                scroll=ft.ScrollMode.ADAPTIVE,
             ),
             actions=[
-                ft.TextButton("Cancelar", on_click=self.close_modal),
-                ft.ElevatedButton("Salvar", on_click=self.save_ne, icon="SAVE"),
+                self.modal_form_loading_ring,
+                self.modal_form_btn_cancelar,
+                self.modal_form_btn_salvar,
             ],
             actions_alignment=ft.MainAxisAlignment.END,
         )
@@ -86,13 +135,27 @@ class NesView(ft.Column):
             expand=True,
             on_change=self.load_nes_data_wrapper
         )
+        
+        self.filtro_pi = ft.Dropdown(
+            label="Filtrar por PI", 
+            options=[ft.dropdown.Option(text="Carregando...", disabled=True)], 
+            expand=True, 
+            on_change=self.on_pi_filter_change
+        )
+        self.filtro_nd = ft.Dropdown(
+            label="Filtrar por ND", 
+            options=[ft.dropdown.Option(text="Carregando...", disabled=True)], 
+            expand=True, 
+            on_change=self.load_nes_data_wrapper
+        )
+        
         self.btn_limpar_filtros = ft.IconButton(
             icon="CLEAR_ALL", 
             tooltip="Limpar Filtros",
             on_click=self.limpar_filtros
         )
 
-        # --- LAYOUT ATUALIZADO (com filtros) ---
+        # --- LAYOUT ATUALIZADO (com filtros Lote 1) ---
         self.controls = [
             ft.Row(
                 [
@@ -105,11 +168,17 @@ class NesView(ft.Column):
                 alignment=ft.MainAxisAlignment.SPACE_BETWEEN
             ),
             ft.ElevatedButton("Adicionar Nova NE", icon="ADD", on_click=self.open_add_modal),
+            
             ft.Row([
                 self.filtro_pesquisa_ne,
                 self.filtro_nc_vinculada,
+            ]),
+            ft.Row([
+                self.filtro_pi,
+                self.filtro_nd,
                 self.btn_limpar_filtros
             ]),
+            
             ft.Divider(),
             ft.Container(
                 content=self.tabela_nes,
@@ -119,12 +188,53 @@ class NesView(ft.Column):
 
         self.page.overlay.append(self.modal_form)
         self.page.overlay.append(self.confirm_delete_dialog)
+        self.page.overlay.append(self.date_picker_empenho) 
         
         self.load_nc_filter_options()
+        self.load_pi_nd_filter_options() 
         self.load_nes_data()
 
-    def show_snackbar(self, message, color="red"):
-        self.page.snack_bar = ft.SnackBar(ft.Text(message), bgcolor=color)
+    def open_datepicker(self, picker: ft.DatePicker):
+        if picker and self.page: 
+             if picker not in self.page.overlay:
+                 self.page.overlay.append(picker)
+                 self.page.update()
+             picker.visible = True
+             picker.open = True
+             self.page.update()
+
+    def handle_date_empenho_change(self, e):
+        selected_date = e.control.value
+        self.modal_txt_data_empenho.value = selected_date.strftime('%Y-%m-%d') if selected_date else ""
+        e.control.open = False
+        self.modal_txt_data_empenho.update()
+
+    # (LOTE 3, Item 11) - Função de conveniência para mostrar erro
+    def show_error(self, message):
+        """Exibe o modal de erro global."""
+        if self.error_modal:
+            self.error_modal.show(message)
+        else:
+            print(f"ERRO CRÍTICO (Modal não encontrado): {message}")
+            
+    # (LOTE 3, Erro #4) - Função para traduzir erros de DB
+    def handle_db_error(self, ex, context=""):
+        """Traduz erros comuns do Supabase/PostgREST para mensagens amigáveis."""
+        msg = str(ex)
+        print(f"Erro de DB Bruto ({context}): {msg}") # Manter no log
+        
+        if "duplicate key value violates unique constraint" in msg and "notas_de_empenho_numero_ne_key" in msg:
+            self.show_error("Erro: Já existe uma Nota de Empenho com este número (2025NE...).")
+        elif "duplicate key value violates unique constraint" in msg:
+            self.show_error("Erro: Já existe um registo com este identificador único.")
+        elif "fetch failed" in msg or "Connection refused" in msg:
+            self.show_error("Erro de Rede: Não foi possível conectar ao banco de dados. Verifique sua internet.")
+        else:
+            self.show_error(f"Erro inesperado ao {context}: {msg}")
+
+    def show_success_snackbar(self, message):
+        """Mostra uma mensagem de sucesso (verde)."""
+        self.page.snack_bar = ft.SnackBar(ft.Text(message), bgcolor="green")
         self.page.snack_bar.open = True
         self.page.update()
 
@@ -144,11 +254,11 @@ class NesView(ft.Column):
 
     def load_nc_filter_options(self):
         """
-        Busca todas as NCs (ID e Numero) para preencher o dropdown de filtro.
+        (LOTE 1, Item 3 - CORRIGIDO)
         """
         print("NEs: A carregar NCs para o filtro...")
         try:
-            resposta_ncs = supabase.table('notas_de_credito') \
+            resposta_ncs = supabase.table('ncs_com_saldos') \
                                    .select('id, numero_nc') \
                                    .order('numero_nc', desc=False) \
                                    .execute()
@@ -169,29 +279,69 @@ class NesView(ft.Column):
 
         except Exception as ex:
             print(f"Erro ao carregar NCs para filtro: {ex}")
-            # Este é o erro que víamos no log
-            self.show_snackbar(f"Erro ao carregar NCs para filtro: {ex}")
+            self.handle_db_error(ex, "carregar filtros de NC")
+
+    def load_pi_nd_filter_options(self, pi_selecionado=None):
+        try:
+            if pi_selecionado is None:
+                print("NEs: A carregar opções de filtro (PIs e NDs)...")
+                pis = supabase.rpc('get_distinct_pis').execute()
+                self.filtro_pi.options.clear()
+                self.filtro_pi.options.append(ft.dropdown.Option(text="Todos os PIs", key=None)) 
+                if pis.data:
+                    for pi in sorted(pis.data): 
+                        if pi: self.filtro_pi.options.append(ft.dropdown.Option(text=pi, key=pi))
+                
+                nds = supabase.rpc('get_distinct_nds').execute()
+                self.filtro_nd.options.clear()
+                self.filtro_nd.options.append(ft.dropdown.Option(text="Todas as NDs", key=None)) 
+                if nds.data:
+                    for nd in sorted(nds.data): 
+                        if nd: self.filtro_nd.options.append(ft.dropdown.Option(text=nd, key=nd))
+                print("NEs: Opções de filtro PI/ND iniciais carregadas.")
+            else:
+                print(f"NEs: A carregar NDs para o PI: {pi_selecionado}...")
+                self.filtro_nd.disabled = True 
+                self.filtro_nd.update()
+                nds = supabase.rpc('get_distinct_nds_for_pi', {'p_pi': pi_selecionado}).execute()
+                self.filtro_nd.options.clear()
+                self.filtro_nd.options.append(ft.dropdown.Option(text="Todas as NDs", key=None))
+                if nds.data:
+                    for nd in sorted(nds.data):
+                         if nd: self.filtro_nd.options.append(ft.dropdown.Option(text=nd, key=nd))
+                print("NEs: Filtro ND atualizado.")
+            self.filtro_nd.disabled = False 
+            self.update() 
+        except Exception as ex: 
+            print(f"Erro ao carregar opções de filtro PI/ND: {ex}")
+            self.handle_db_error(ex, "carregar filtros PI/ND")
+
+    def on_pi_filter_change(self, e):
+        pi_val = self.filtro_pi.value if self.filtro_pi.value else None
+        self.filtro_nd.value = None 
+        self.load_pi_nd_filter_options(pi_selecionado=pi_val) 
+        self.load_nes_data() 
 
     def load_nes_data_wrapper(self, e):
         self.load_nes_data()
 
     def load_nes_data(self):
-        """
-        Busca todas as NEs, APLICANDO FILTROS, e as NCs vinculadas.
-        """
         print("NEs: A carregar dados com filtros...")
         self.progress_ring.visible = True
         self.page.update()
 
         try:
             query = supabase.table('notas_de_empenho') \
-                           .select('*, notas_de_credito(numero_nc)') # O join busca o numero_nc
+                           .select('*, notas_de_credito(numero_nc, pi, natureza_despesa)')
 
             if self.filtro_pesquisa_ne.value:
                 query = query.ilike('numero_ne', f"%{self.filtro_pesquisa_ne.value}%")
-            
             if self.filtro_nc_vinculada.value:
                 query = query.eq('id_nc', self.filtro_nc_vinculada.value)
+            if self.filtro_pi.value:
+                query = query.eq('notas_de_credito.pi', self.filtro_pi.value)
+            if self.filtro_nd.value:
+                query = query.eq('notas_de_credito.natureza_despesa', self.filtro_nd.value)
 
             resposta = query.order('data_empenho', desc=True).execute()
 
@@ -238,48 +388,60 @@ class NesView(ft.Column):
                         ft.DataCell(ft.Text("")),
                     ])
                 )
-
             print("NEs: Dados carregados com sucesso.")
 
         except Exception as ex:
             print(f"Erro ao carregar NEs: {ex}")
-            self.show_snackbar(f"Erro ao carregar NEs: {ex}")
+            self.handle_db_error(ex, "carregar Notas de Empenho")
         
         self.progress_ring.visible = False
         self.page.update()
 
     def limpar_filtros(self, e):
-        """
-        Limpa os filtros de NE e recarrega a tabela.
-        """
         print("NEs: A limpar filtros...")
         self.filtro_pesquisa_ne.value = ""
         self.filtro_nc_vinculada.value = None
+        self.filtro_pi.value = None     
+        self.filtro_nd.value = None     
+        self.load_pi_nd_filter_options(pi_selecionado=None) 
         self.load_nes_data()
         self.page.update()
 
+    # (LOTE 3, Erro #3) - Atualizado para guardar os saldos
     def carregar_ncs_para_dropdown_modal(self):
-        """Busca NCs 'Ativas' para o dropdown do MODAL."""
+        """Busca NCs 'Ativas' para o dropdown do MODAL e armazena seus saldos."""
         print("NEs Modal: A carregar NCs ativas...")
         try:
+            # Seleciona o ID e o Saldo
             resposta_ncs = supabase.table('ncs_com_saldos') \
                                    .select('id, numero_nc, saldo_disponivel') \
                                    .filter('status_calculado', 'eq', 'Ativa') \
                                    .execute()
+            
             self.modal_dropdown_nc.options.clear()
+            self.saldos_ncs_ativas.clear() # Limpa o cache de saldos
+            
             if not resposta_ncs.data:
-                self.show_snackbar("Nenhuma NC 'Ativa' encontrada para vincular.")
+                self.page.snack_bar = ft.SnackBar(ft.Text("Nenhuma NC 'Ativa' encontrada para vincular."), bgcolor="orange")
+                self.page.snack_bar.open = True
+                self.page.update()
                 return False
+                
             for nc in resposta_ncs.data:
-                saldo_formatado = self.formatar_moeda(nc['saldo_disponivel'])
+                saldo_float = float(nc['saldo_disponivel'])
+                saldo_formatado = self.formatar_moeda(saldo_float)
                 texto_opcao = f"{nc['numero_nc']} (Saldo: {saldo_formatado})"
+                
                 self.modal_dropdown_nc.options.append(
                     ft.dropdown.Option(key=nc['id'], text=texto_opcao)
                 )
+                # (LOTE 3, Erro #3) - Armazena o saldo para validação futura
+                self.saldos_ncs_ativas[nc['id']] = saldo_float
+                
             return True
         except Exception as ex:
             print(f"Erro ao carregar NCs para dropdown do modal: {ex}")
-            self.show_snackbar(f"Erro ao carregar NCs: {ex}")
+            self.handle_db_error(ex, "carregar NCs ativas")
             return False
 
     def open_add_modal(self, e):
@@ -288,8 +450,9 @@ class NesView(ft.Column):
             return 
         self.id_ne_sendo_editada = None
         self.modal_form.title = ft.Text("Adicionar Nova Nota de Empenho")
-        self.modal_form.actions[1].text = "Salvar"
-        self.modal_form.actions[1].icon = "SAVE"
+        self.modal_form_btn_salvar.text = "Salvar"
+        self.modal_form_btn_salvar.icon = "SAVE"
+        
         self.modal_txt_numero_ne.value = ""
         self.modal_txt_data_empenho.value = ""
         self.modal_txt_valor_empenhado.value = ""
@@ -306,10 +469,14 @@ class NesView(ft.Column):
         self.carregar_ncs_para_dropdown_modal() 
         self.id_ne_sendo_editada = ne['id']
         self.modal_form.title = ft.Text(f"Editar NE: {ne['numero_ne']}")
-        self.modal_form.actions[1].text = "Atualizar"
-        self.modal_form.actions[1].icon = "UPDATE"
+        self.modal_form_btn_salvar.text = "Atualizar"
+        self.modal_form_btn_salvar.icon = "UPDATE"
+        
         self.modal_dropdown_nc.value = ne['id_nc'] 
-        self.modal_txt_numero_ne.value = ne['numero_ne']
+        
+        numero_ne_sem_prefixo = ne.get('numero_ne', '').upper().replace("2025NE", "")
+        self.modal_txt_numero_ne.value = numero_ne_sem_prefixo
+        
         self.modal_txt_data_empenho.value = ne['data_empenho']
         self.modal_txt_valor_empenhado.value = self.formatar_valor_para_campo(ne['valor_empenhado'])
         self.modal_txt_descricao.value = ne['descricao']
@@ -324,6 +491,8 @@ class NesView(ft.Column):
         self.page.update()
 
     def save_ne(self, e):
+        
+        # 1. Validação
         try:
             print("A validar dados da NE...")
             campos_obrigatorios = {
@@ -338,33 +507,83 @@ class NesView(ft.Column):
                 if not campo.value:
                     campo.error_text = msg_erro
                     has_error = True
+            
+            if not self.modal_txt_numero_ne.value or len(self.modal_txt_numero_ne.value) != 6:
+                self.modal_txt_numero_ne.error_text = "Deve ter 6 dígitos"
+                has_error = True
+
             if has_error:
                 print("Erro de validação.")
                 self.modal_form.update()
                 return 
-            valor_limpo = self.modal_txt_valor_empenhado.value.replace(".", "").replace(",", ".")
+            
+            valor_limpo_str = self.modal_txt_valor_empenhado.value.replace(".", "").replace(",", ".")
+            valor_empenhado_float = float(valor_limpo_str)
+            id_nc_selecionada = self.modal_dropdown_nc.value
+            
+            # (LOTE 3, Erro #3) - Validação de Saldo Negativo
+            if self.id_ne_sendo_editada is None: # Só verifica o saldo ao ADICIONAR
+                if id_nc_selecionada not in self.saldos_ncs_ativas:
+                    self.show_error("Erro: NC selecionada não encontrada ou não está ativa. Recarregue a lista.")
+                    return
+                
+                saldo_disponivel_nc = self.saldos_ncs_ativas[id_nc_selecionada]
+                
+                if valor_empenhado_float > saldo_disponivel_nc:
+                    msg_erro_saldo = f"Valor do empenho ({self.formatar_moeda(valor_empenhado_float)}) é maior que o saldo disponível da NC ({self.formatar_moeda(saldo_disponivel_nc)})."
+                    self.show_error(msg_erro_saldo)
+                    self.modal_txt_valor_empenhado.error_text = "Valor excede o saldo"
+                    self.modal_form.update()
+                    return
+            # (Fim LOTE 3, Erro #3)
+            
+            numero_formatado = f"2025NE{self.modal_txt_numero_ne.value.strip().upper()}"
+            
             dados_para_salvar = {
-                "id_nc": self.modal_dropdown_nc.value,
-                "numero_ne": self.modal_txt_numero_ne.value, 
+                "id_nc": id_nc_selecionada,
+                "numero_ne": numero_formatado, 
                 "data_empenho": self.modal_txt_data_empenho.value,
-                "valor_empenhado": float(valor_limpo),
+                "valor_empenhado": valor_empenhado_float,
                 "descricao": self.modal_txt_descricao.value,
             }
+        except Exception as ex_validation:
+            print(f"Erro na validação de dados: {ex_validation}")
+            self.show_error(f"Erro nos dados: {ex_validation}")
+            return
+
+        # 2. Feedback de Loading (Lote 2)
+        self.modal_form_loading_ring.visible = True
+        self.modal_form_btn_cancelar.disabled = True
+        self.modal_form_btn_salvar.disabled = True
+        self.modal_form.update()
+
+        # 3. Execução (com try/except/finally)
+        try:
             if self.id_ne_sendo_editada is None:
-                print("A inserir nova NE no Supabase...")
+                print(f"A inserir nova NE no Supabase como: {numero_formatado}...")
                 supabase.table('notas_de_empenho').insert(dados_para_salvar).execute()
-                print("NE salva com sucesso.")
-                self.show_snackbar(f"NE {dados_para_salvar['numero_ne']} salva com sucesso!", "green")
+                msg_sucesso = f"NE {numero_formatado} salva com sucesso!"
             else:
-                print(f"A atualizar NE ID: {self.id_ne_sendo_editada}...")
+                print(f"A atualizar NE ID: {self.id_ne_sendo_editada} como: {numero_formatado}...")
                 supabase.table('notas_de_empenho').update(dados_para_salvar).eq('id', self.id_ne_sendo_editada).execute()
-                print("NE atualizada com sucesso.")
-                self.show_snackbar(f"NE {dados_para_salvar['numero_ne']} atualizada com sucesso!", "green")
+                msg_sucesso = f"NE {numero_formatado} atualizada com sucesso!"
+            
+            print("NE salva com sucesso.")
+            self.show_success_snackbar(msg_sucesso)
+            
             self.close_modal(None) 
             self.load_nes_data() 
+            if self.on_data_changed_callback:
+                self.on_data_changed_callback(None) # Recarrega o Dashboard e NCs
+
         except Exception as ex:
             print(f"Erro ao salvar NE: {ex}")
-            self.show_snackbar(f"Erro ao salvar: {ex}")
+            self.handle_db_error(ex, f"salvar NE {numero_formatado}")
+            
+        finally:
+            self.modal_form_loading_ring.visible = False
+            self.modal_form_btn_cancelar.disabled = False
+            self.modal_form_btn_salvar.disabled = False
             self.modal_form.update()
             
     def open_confirm_delete(self, ne):
@@ -379,21 +598,31 @@ class NesView(ft.Column):
         self.page.update()
 
     def confirm_delete(self, e):
+        id_para_excluir = self.confirm_delete_dialog.data
+        if not id_para_excluir:
+            self.show_error("Erro: ID da NE para exclusão não encontrado.")
+            self.close_confirm_delete(None)
+            return
+
         try:
-            id_para_excluir = self.confirm_delete_dialog.data
             print(f"A excluir NE ID: {id_para_excluir}...")
             supabase.table('notas_de_empenho').delete().eq('id', id_para_excluir).execute()
             print("NE excluída com sucesso.")
-            self.show_snackbar("Nota de Empenho excluída com sucesso.", "green")
+            
+            self.show_success_snackbar("Nota de Empenho excluída com sucesso.")
+            
             self.close_confirm_delete(None)
             self.load_nes_data() 
+            if self.on_data_changed_callback:
+                self.on_data_changed_callback(None) 
+                
         except Exception as ex:
             print(f"Erro ao excluir NE: {ex}")
-            self.show_snackbar(f"Erro ao excluir: {ex}")
+            self.handle_db_error(ex, "excluir NE")
             self.close_confirm_delete(None)
 
-def create_nes_view(page: ft.Page):
+def create_nes_view(page: ft.Page, on_data_changed=None, error_modal=None): 
     """
     Exporta a nossa NesView como um controlo Flet padrão.
     """
-    return NesView(page)
+    return NesView(page, on_data_changed=on_data_changed, error_modal=error_modal)

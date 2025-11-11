@@ -1,5 +1,5 @@
 # views/dashboard_view.py
-# (Versão 3, com filtros de saldo)
+# (Versão 5.0, Lote 4 - Responsividade dos Filtros)
 
 import flet as ft
 from supabase_client import supabase # Cliente 'anon'
@@ -8,14 +8,17 @@ from datetime import datetime, timedelta
 class DashboardView(ft.Column):
     """
     Representa o conteúdo da aba Dashboard.
-    Versão 3: Adiciona filtros para o Saldo Total.
+    Versão 5.0 (Lote 4):
+    - (Item 10) Torna os controlos de filtro responsivos (stack vertical em telas < 768px).
     """
-    def __init__(self, page):
+    
+    def __init__(self, page, error_modal=None):
         super().__init__()
         self.page = page
         self.alignment = ft.MainAxisAlignment.START
         self.spacing = 20
-        self.padding = ft.Container(padding=20)
+        self.padding = 20
+        self.error_modal = error_modal
         
         self.progress_ring = ft.ProgressRing(visible=True, width=32, height=32)
         self.txt_saldo_total = ft.Text("R$ 0,00", size=32, weight=ft.FontWeight.BOLD)
@@ -40,7 +43,7 @@ class DashboardView(ft.Column):
             label="Filtrar Saldo por PI",
             options=[ft.dropdown.Option(text="Carregando...", disabled=True)],
             expand=True,
-            on_change=self.on_pi_filter_change # Lógica de cascata
+            on_change=self.on_pi_filter_change
         )
         self.filtro_nd = ft.Dropdown(
             label="Filtrar Saldo por ND",
@@ -56,7 +59,7 @@ class DashboardView(ft.Column):
                 ft.dropdown.Option(text="Vencida", key="Vencida"),
                 ft.dropdown.Option(text="Cancelada", key="Cancelada"),
             ],
-            value="Ativa", # Começa mostrando apenas Ativas
+            value="Ativa",
             width=200,
             on_change=self.load_dashboard_data_wrapper
         )
@@ -66,7 +69,7 @@ class DashboardView(ft.Column):
             on_click=self.limpar_filtros
         )
 
-        # --- LAYOUT ---
+        # --- LAYOUT (LOTE 4 - Responsivo) ---
         self.controls = [
             ft.Row(
                 [
@@ -78,14 +81,28 @@ class DashboardView(ft.Column):
                 ],
                 alignment=ft.MainAxisAlignment.SPACE_BETWEEN
             ),
-            ft.Row([
-                self.filtro_pi,
-                self.filtro_nd
-            ]),
-            ft.Row([
-                 self.filtro_status,
-                 self.btn_limpar_filtros
-            ], alignment=ft.MainAxisAlignment.START),
+            
+            # (LOTE 4, Item 10) - Linhas de Filtro convertidas para Responsivas
+            ft.ResponsiveRow(
+                [
+                    ft.Column(col={"sm": 12, "md": 6}, controls=[self.filtro_pi]),
+                    ft.Column(col={"sm": 12, "md": 6}, controls=[self.filtro_nd]),
+                ]
+            ),
+            ft.ResponsiveRow(
+                [
+                    ft.Column(col={"sm": 12, "md": 4}, controls=[self.filtro_status]),
+                    ft.Column(
+                        col={"sm": 12, "md": 2}, 
+                        controls=[self.btn_limpar_filtros],
+                        # Alinha o botão verticalmente com o dropdown
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER 
+                    ),
+                ],
+                alignment=ft.MainAxisAlignment.START
+            ),
+            # (Fim LOTE 4)
+
             self.txt_saldo_total,
             ft.Divider(),
             ft.Text("Notas de Crédito a Vencer (Próximos 7 dias)", size=20, weight=ft.FontWeight.W_600),
@@ -99,11 +116,22 @@ class DashboardView(ft.Column):
         self.load_filter_options()
         self.load_dashboard_data(None)
         
-    def show_snackbar(self, message, color="red"):
-        """Mostra uma mensagem de feedback."""
-        self.page.snack_bar = ft.SnackBar(ft.Text(message), bgcolor=color)
-        self.page.snack_bar.open = True
-        self.page.update()
+    def show_error(self, message):
+        """Exibe o modal de erro global."""
+        if self.error_modal:
+            self.error_modal.show(message)
+        else:
+            print(f"ERRO CRÍTICO (Modal não encontrado): {message}")
+            
+    def handle_db_error(self, ex, context=""):
+        """Traduz erros comuns do Supabase/PostgREST para mensagens amigáveis."""
+        msg = str(ex)
+        print(f"Erro de DB Bruto ({context}): {msg}") 
+        
+        if "fetch failed" in msg or "Connection refused" in msg:
+            self.show_error("Erro de Rede: Não foi possível conectar ao banco de dados. Verifique sua internet.")
+        else:
+            self.show_error(f"Erro inesperado ao {context}: {msg}")
 
     def formatar_moeda(self, valor):
         """Formata um float ou string para R$ 0.000,00"""
@@ -120,8 +148,6 @@ class DashboardView(ft.Column):
         try:
             if pi_selecionado is None:
                 print("Dashboard: A carregar opções de filtro (PIs e NDs)...")
-                # (As permissões SQL V7 que executámos devem corrigir
-                # o 'Erro ao carregar opções de filtro no Dashboard:')
                 pis = supabase.rpc('get_distinct_pis').execute() 
                 self.filtro_pi.options.clear()
                 self.filtro_pi.options.append(ft.dropdown.Option(text="Todos os PIs", key=None))
@@ -154,8 +180,7 @@ class DashboardView(ft.Column):
 
         except Exception as ex:
             print(f"Erro ao carregar opções de filtro no Dashboard: {ex}")
-            # Este é o erro que víamos no log
-            self.show_snackbar(f"Erro ao carregar filtros: {ex}")
+            self.handle_db_error(ex, "carregar filtros do Dashboard")
 
     def on_pi_filter_change(self, e):
         """
@@ -240,8 +265,7 @@ class DashboardView(ft.Column):
 
         except Exception as ex:
             print(f"Erro ao carregar dashboard: {ex}")
-            self.page.snack_bar = ft.SnackBar(ft.Text(f"Erro ao carregar dados: {ex}"), bgcolor="red")
-            self.page.snack_bar.open = True
+            self.handle_db_error(ex, "carregar dados do Dashboard")
         
         self.progress_ring.visible = False
         self.page.update()
@@ -260,8 +284,8 @@ class DashboardView(ft.Column):
         self.page.update()
 
 # --- Função de Nível Superior (Obrigatória) ---
-def create_dashboard_view(page: ft.Page):
+def create_dashboard_view(page: ft.Page, error_modal=None):
     """
     Exporta a nossa DashboardView como um controlo Flet padrão.
     """
-    return DashboardView(page)
+    return DashboardView(page, error_modal=error_modal)
