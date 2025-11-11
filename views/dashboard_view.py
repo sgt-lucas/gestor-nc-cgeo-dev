@@ -1,5 +1,5 @@
 # views/dashboard_view.py
-# (Versão 5.0, Lote 4 - Responsividade dos Filtros)
+# (Versão 5.1, Lote 4.1 - Corrige BUG CRÍTICO 'vertical_alignment')
 
 import flet as ft
 from supabase_client import supabase # Cliente 'anon'
@@ -8,17 +8,18 @@ from datetime import datetime, timedelta
 class DashboardView(ft.Column):
     """
     Representa o conteúdo da aba Dashboard.
-    Versão 5.0 (Lote 4):
-    - (Item 10) Torna os controlos de filtro responsivos (stack vertical em telas < 768px).
+    Versão 5.1 (Lote 4.1):
+    - (BUGFIX) Corrige 'vertical_alignment' usado indevidamente em ft.Column.
     """
     
+    # (LOTE 3, Item 11) - Aceita o error_modal
     def __init__(self, page, error_modal=None):
         super().__init__()
         self.page = page
         self.alignment = ft.MainAxisAlignment.START
         self.spacing = 20
         self.padding = 20
-        self.error_modal = error_modal
+        self.error_modal = error_modal # (LOTE 3)
         
         self.progress_ring = ft.ProgressRing(visible=True, width=32, height=32)
         self.txt_saldo_total = ft.Text("R$ 0,00", size=32, weight=ft.FontWeight.BOLD)
@@ -69,7 +70,7 @@ class DashboardView(ft.Column):
             on_click=self.limpar_filtros
         )
 
-        # --- LAYOUT (LOTE 4 - Responsivo) ---
+        # --- LAYOUT (LOTE 4.1 - Corrigido) ---
         self.controls = [
             ft.Row(
                 [
@@ -82,7 +83,6 @@ class DashboardView(ft.Column):
                 alignment=ft.MainAxisAlignment.SPACE_BETWEEN
             ),
             
-            # (LOTE 4, Item 10) - Linhas de Filtro convertidas para Responsivas
             ft.ResponsiveRow(
                 [
                     ft.Column(col={"sm": 12, "md": 6}, controls=[self.filtro_pi]),
@@ -95,13 +95,12 @@ class DashboardView(ft.Column):
                     ft.Column(
                         col={"sm": 12, "md": 2}, 
                         controls=[self.btn_limpar_filtros],
-                        # Alinha o botão verticalmente com o dropdown
-                        vertical_alignment=ft.CrossAxisAlignment.CENTER 
+                        # vertical_alignment REMOVIDO DAQUI (BUG)
                     ),
                 ],
-                alignment=ft.MainAxisAlignment.START
+                alignment=ft.MainAxisAlignment.START,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER # <-- (LOTE 4.1) - CORREÇÃO MOVIDA PARA AQUI
             ),
-            # (Fim LOTE 4)
 
             self.txt_saldo_total,
             ft.Divider(),

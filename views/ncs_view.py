@@ -1,5 +1,5 @@
 # views/ncs_view.py
-# (Versão 17.1 - Lote 3.3: Corrige BUG CRÍTICO 'max_length')
+# (Versão 17.2 - Lote 5: Máscara de Moeda Automática)
 
 import flet as ft
 from supabase_client import supabase # Cliente 'anon'
@@ -13,7 +13,9 @@ import re
 class NcsView(ft.Column):
     """
     Representa o conteúdo da aba Notas de Crédito (CRUD).
-    Versão 17.1 (Lote 3.3):
+    Versão 17.2 (Lote 5):
+    - (Item 1) ADICIONA MÁSCARA DE MOEDA: Formata campos de valor automaticamente
+      (ex: 1234 -> 12,34) ao digitar.
     - (BUGFIX) Move 'max_length' do InputFilter para o TextField.
     """
     
@@ -51,14 +53,14 @@ class NcsView(ft.Column):
             border_radius=8,
         )
 
-        # --- Modais: Controlos (Lote 3.3 - CORRIGIDO) ---
+        # --- Modais: Controlos (Lote 5 - ATUALIZADO) ---
         
-        # (LOTE 3.3) - CORREÇÃO DO BUG 'max_length'
+        # (LOTE 3.3)
         self.modal_txt_numero_nc = ft.TextField(
             label="Número da NC (6 dígitos)", 
             prefix_text="2025NC",
-            input_filter=ft.InputFilter(r"[0-9]"), # <-- max_length REMOVIDO DAQUI
-            max_length=6,                           # <-- max_length MOVIDO PARA AQUI
+            input_filter=ft.InputFilter(r"[0-9]"), 
+            max_length=6,                           
             keyboard_type=ft.KeyboardType.NUMBER
         )
         
@@ -84,7 +86,15 @@ class NcsView(ft.Column):
             first_date=datetime(2020, 1, 1),
             last_date=datetime(2030, 12, 31)
         )
-        self.modal_txt_valor_inicial = ft.TextField(label="Valor Inicial", prefix="R$", input_filter=ft.InputFilter(r"[0-9.,]"))
+        
+        # (LOTE 5) - ATUALIZADO: Remove input_filter, adiciona on_change
+        self.modal_txt_valor_inicial = ft.TextField(
+            label="Valor Inicial", 
+            prefix="R$", 
+            on_change=self.format_currency_input, # <-- NOVO
+            keyboard_type=ft.KeyboardType.NUMBER   # <-- NOVO
+        )
+        
         self.modal_txt_ptres = ft.TextField(label="PTRES", width=150)
         self.modal_txt_nd = ft.TextField(label="Natureza Despesa (ND)", width=150)
         self.modal_txt_fonte = ft.TextField(label="Fonte", width=150)
@@ -103,7 +113,15 @@ class NcsView(ft.Column):
         
         self.recolhimento_modal_title = ft.Text("Recolher Saldo da NC")
         self.modal_rec_data = ft.TextField(label="Data do Recolhimento", hint_text="AAAA-MM-DD", autofocus=True)
-        self.modal_rec_valor = ft.TextField(label="Valor Recolhido", prefix="R$", input_filter=ft.InputFilter(r"[0-9.,]"))
+        
+        # (LOTE 5) - ATUALIZADO: Remove input_filter, adiciona on_change
+        self.modal_rec_valor = ft.TextField(
+            label="Valor Recolhido", 
+            prefix="R$", 
+            on_change=self.format_currency_input, # <-- NOVO
+            keyboard_type=ft.KeyboardType.NUMBER   # <-- NOVO
+        )
+        
         self.modal_rec_descricao = ft.TextField(label="Descrição (Opcional)")
 
         self.modal_form_loading_ring = ft.ProgressRing(visible=False, width=24, height=24)
@@ -289,6 +307,40 @@ class NcsView(ft.Column):
         except (ValueError, TypeError): 
             return "0,00"
             
+    # (LOTE 5) - NOVA FUNÇÃO
+    def format_currency_input(self, e: ft.ControlEvent):
+        """Formata o valor monetário_automaticamente ao digitar."""
+        try:
+            current_value = e.control.value or ""
+            # 1. Limpa tudo que não for dígito
+            digits = "".join(filter(str.isdigit, current_value))
+
+            if not digits:
+                e.control.value = ""
+                if self.page: self.page.update()
+                return
+
+            # 2. Converte para número (ex: "123456" -> 123456)
+            int_value = int(digits)
+
+            # 3. Formata como moeda (ex: 123456 -> 1234.56 -> "1.234,56")
+            val_float = int_value / 100.0
+            
+            # Formata para "1.234,56" (Padrão BR)
+            formatted_value = f"{val_float:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+            
+            # 4. Atualizar o campo
+            if e.control.value != formatted_value:
+                e.control.value = formatted_value
+                
+                # (Nota: Flet pode mover o cursor. Esta é uma limitação
+                # conhecida ao reformatar o valor via on_change.)
+                e.control.update()
+                
+        except Exception as ex:
+            print(f"Erro ao formatar moeda: {ex}")
+            # Mantém o valor como está se a formatação falhar
+            
     def open_datepicker(self, picker: ft.DatePicker):
         if picker and self.page: 
              if picker not in self.page.overlay:
@@ -465,7 +517,10 @@ class NcsView(ft.Column):
         
         self.modal_txt_data_recebimento.value = nc.get('data_recebimento', '')
         self.modal_txt_data_validade.value = nc.get('data_validade_empenho', '')
+        
+        # (LOTE 5) - Garante que o valor vindo do DB (float) é formatado para o campo (string "0,00")
         self.modal_txt_valor_inicial.value = self.formatar_valor_para_campo(nc.get('valor_inicial'))
+        
         self.modal_txt_ptres.value = nc.get('ptres', '')
         self.modal_txt_nd.value = nc.get('natureza_despesa', '')
         self.modal_txt_fonte.value = nc.get('fonte', '')
@@ -488,7 +543,7 @@ class NcsView(ft.Column):
         self.page.update()
 
     def save_nc(self, e):
-        """ Salva (INSERT) ou Atualiza (UPDATE) uma NC (V17). """
+        """ Salva (INSERT) ou Atualiza (UPDATE) uma NC (V17.2). """
         
         # 1. Validação
         try:
@@ -515,6 +570,8 @@ class NcsView(ft.Column):
                 self.modal_form.update()
                 return
 
+            # (LOTE 5) - O valor já está formatado ("1.234,56").
+            # A lógica de limpeza continua a mesma e funciona.
             valor_limpo = self.modal_txt_valor_inicial.value.replace(".", "").replace(",", ".")
             
             numero_formatado = f"2025NC{self.modal_txt_numero_nc.value.strip().upper()}"
@@ -669,6 +726,8 @@ class NcsView(ft.Column):
                 self.recolhimento_modal.update()
                 return
             
+            # (LOTE 5) - O valor já está formatado ("1.234,56").
+            # A lógica de limpeza continua a mesma e funciona.
             valor_limpo = self.modal_rec_valor.value.replace(".", "").replace(",", ".")
             dados_para_inserir = {
                 "id_nc": self.id_nc_para_recolhimento, 
@@ -884,9 +943,15 @@ class NcsView(ft.Column):
             self.modal_txt_data_recebimento.value = dados_nc['data_recebimento']
         if dados_nc.get('data_validade'):
             self.modal_txt_data_validade.value = dados_nc['data_validade']
+            
         if dados_nc.get('valor_inicial'):
-            valor_formatado = dados_nc['valor_inicial'].replace(".", "")
-            self.modal_txt_valor_inicial.value = valor_formatado
+            # (LOTE 5) - O valor do PDF (ex: "1.234,56") é limpo para
+            # acionar o format_currency_input corretamente (ou ser formatado)
+            valor_pdf_limpo = dados_nc['valor_inicial'].replace(".", "").replace(",", "")
+            self.modal_txt_valor_inicial.value = valor_pdf_limpo
+            # Força a formatação imediata
+            self.format_currency_input(ft.ControlEvent(target=self.modal_txt_valor_inicial, name="change", data=valor_pdf_limpo, control=self.modal_txt_valor_inicial, page=self.page))
+            
         if dados_nc.get('ptres'):
             self.modal_txt_ptres.value = dados_nc['ptres']
         if dados_nc.get('nd'):

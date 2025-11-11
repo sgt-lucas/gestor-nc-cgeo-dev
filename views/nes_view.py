@@ -1,5 +1,5 @@
 # views/nes_view.py
-# (Versão 7.1, Lote 3.3 - Corrige Saldo Negativo, Prefixo, Erros e max_length)
+# (Versão 7.2 - Lote 5: Máscara de Moeda Automática)
 
 import flet as ft
 from supabase_client import supabase # Cliente 'anon'
@@ -8,7 +8,8 @@ from datetime import datetime
 class NesView(ft.Column):
     """
     Representa o conteúdo da aba Notas de Empenho (CRUD).
-    Versão 7.1 (Lote 3.3):
+    Versão 7.2 (Lote 5):
+    - (Item 1) ADICIONA MÁSCARA DE MOEDA: Formata 'Valor Empenhado' automaticamente.
     - (BUGFIX) Move 'max_length' do InputFilter para o TextField.
     - (Erro #3) ADICIONA VALIDAÇÃO DE SALDO: Impede NE com valor maior que o saldo da NC.
     - (Item 11) Substitui show_snackbar pelo novo self.error_modal.
@@ -48,15 +49,15 @@ class NesView(ft.Column):
             border_radius=8,
         )
 
-        # --- Modais (Lote 3.3 - CORRIGIDO) ---
+        # --- Modais (Lote 5 - ATUALIZADO) ---
         self.modal_dropdown_nc = ft.Dropdown(label="Vincular à NC (Obrigatório)")
         
-        # (LOTE 3.3) - CORREÇÃO DO BUG 'max_length'
+        # (LOTE 3.3)
         self.modal_txt_numero_ne = ft.TextField(
             label="Número da NE (6 dígitos)", 
             prefix_text="2025NE",
-            input_filter=ft.InputFilter(r"[0-9]"), # <-- max_length REMOVIDO DAQUI
-            max_length=6,                           # <-- max_length MOVIDO PARA AQUI
+            input_filter=ft.InputFilter(r"[0-9]"), 
+            max_length=6,                           
             keyboard_type=ft.KeyboardType.NUMBER
         )
         
@@ -77,7 +78,14 @@ class NesView(ft.Column):
             last_date=datetime(2030, 12, 31)
         )
         
-        self.modal_txt_valor_empenhado = ft.TextField(label="Valor Empenhado", prefix="R$", input_filter=ft.InputFilter(r"[0-9.,]"))
+        # (LOTE 5) - ATUALIZADO: Remove input_filter, adiciona on_change
+        self.modal_txt_valor_empenhado = ft.TextField(
+            label="Valor Empenhado", 
+            prefix="R$", 
+            on_change=self.format_currency_input, # <-- NOVO
+            keyboard_type=ft.KeyboardType.NUMBER   # <-- NOVO
+        )
+        
         self.modal_txt_descricao = ft.TextField(label="Descrição (Opcional)")
         
         self.modal_form_loading_ring = ft.ProgressRing(visible=False, width=24, height=24)
@@ -251,6 +259,40 @@ class NesView(ft.Column):
             return f"{val:.2f}".replace(".", ",")
         except (ValueError, TypeError):
             return "0,00"
+            
+    # (LOTE 5) - NOVA FUNÇÃO
+    def format_currency_input(self, e: ft.ControlEvent):
+        """Formata o valor monetário_automaticamente ao digitar."""
+        try:
+            current_value = e.control.value or ""
+            # 1. Limpa tudo que não for dígito
+            digits = "".join(filter(str.isdigit, current_value))
+
+            if not digits:
+                e.control.value = ""
+                if self.page: self.page.update()
+                return
+
+            # 2. Converte para número (ex: "123456" -> 123456)
+            int_value = int(digits)
+
+            # 3. Formata como moeda (ex: 123456 -> 1234.56 -> "1.234,56")
+            val_float = int_value / 100.0
+            
+            # Formata para "1.234,56" (Padrão BR)
+            formatted_value = f"{val_float:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+            
+            # 4. Atualizar o campo
+            if e.control.value != formatted_value:
+                e.control.value = formatted_value
+                
+                # (Nota: Flet pode mover o cursor. Esta é uma limitação
+                # conhecida ao reformatar o valor via on_change.)
+                e.control.update()
+                
+        except Exception as ex:
+            print(f"Erro ao formatar moeda: {ex}")
+            # Mantém o valor como está se a formatação falhar
 
     def load_nc_filter_options(self):
         """
@@ -478,7 +520,10 @@ class NesView(ft.Column):
         self.modal_txt_numero_ne.value = numero_ne_sem_prefixo
         
         self.modal_txt_data_empenho.value = ne['data_empenho']
+        
+        # (LOTE 5) - Garante que o valor vindo do DB (float) é formatado para o campo (string "0,00")
         self.modal_txt_valor_empenhado.value = self.formatar_valor_para_campo(ne['valor_empenhado'])
+        
         self.modal_txt_descricao.value = ne['descricao']
         for campo in [self.modal_dropdown_nc, self.modal_txt_numero_ne, self.modal_txt_data_empenho, self.modal_txt_valor_empenhado]:
             campo.error_text = None
@@ -517,6 +562,8 @@ class NesView(ft.Column):
                 self.modal_form.update()
                 return 
             
+            # (LOTE 5) - O valor já está formatado ("1.234,56").
+            # A lógica de limpeza continua a mesma e funciona.
             valor_limpo_str = self.modal_txt_valor_empenhado.value.replace(".", "").replace(",", ".")
             valor_empenhado_float = float(valor_limpo_str)
             id_nc_selecionada = self.modal_dropdown_nc.value
@@ -569,7 +616,7 @@ class NesView(ft.Column):
                 msg_sucesso = f"NE {numero_formatado} atualizada com sucesso!"
             
             print("NE salva com sucesso.")
-            self.show_success_snackbar(msg_sucesso)
+            self.show_success_snackbar(msg_Gsucesso)
             
             self.close_modal(None) 
             self.load_nes_data() 
