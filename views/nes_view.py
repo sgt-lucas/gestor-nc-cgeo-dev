@@ -1,18 +1,17 @@
 # views/nes_view.py
-# (Versão 7.3 - Lote 5.4: Corrige "AssertionError")
+# (Versão 7.5 - Lote 8.3: Adiciona Scroll Global)
 
 import flet as ft
 from supabase_client import supabase # Cliente 'anon'
 from datetime import datetime
-import traceback # <-- (NOVO) ADICIONADO PARA DEBUG
+import traceback 
 
 class NesView(ft.Column):
     """
     Representa o conteúdo da aba Notas de Empenho (CRUD).
-    Versão 7.3 (Lote 5.4):
-    - (BUGFIX) Corrige "AssertionError" ao carregar filtros.
-    - Chamadas de 'load_...' movidas do '__init__' para 'on_mount'.
-    - (Item 1) ADICIONA MÁSCARA DE MOEDA
+    Versão 7.5 (Lote 8.3):
+    - (BUGFIX) Adiciona 'self.scroll = ft.ScrollMode.ADAPTIVE' para 
+      permitir que a aba inteira role em telas pequenas.
     """
     def __init__(self, page, on_data_changed=None, error_modal=None):
         super().__init__()
@@ -26,6 +25,10 @@ class NesView(ft.Column):
         self.alignment = ft.MainAxisAlignment.START
         self.spacing = 20
         self.padding = 20
+        
+        # --- (CORREÇÃO LOTE 8.3) ---
+        self.scroll = ft.ScrollMode.ADAPTIVE # <-- ADICIONADO
+        # --- FIM DA CORREÇÃO ---
 
         self.progress_ring = ft.ProgressRing(visible=True, width=32, height=32)
         
@@ -192,17 +195,10 @@ class NesView(ft.Column):
         self.page.overlay.append(self.confirm_delete_dialog)
         self.page.overlay.append(self.date_picker_empenho) 
         
-        # --- (CORREÇÃO LOTE 5.4) ---
-        # 1. Adicionamos o evento 'on_mount'
+        # (CORREÇÃO LOTE 5.4)
         self.on_mount = self.on_view_mount
         
-        # 2. As chamadas de 'load' foram MOVIDAS
-        # self.load_nc_filter_options()
-        # self.load_pi_nd_filter_options() 
-        # self.load_nes_data()
-        # --- FIM DA CORREÇÃO ---
 
-    # --- (NOVA FUNÇÃO LOTE 5.4) ---
     def on_view_mount(self, e):
         """Chamado pelo Flet DEPOIS que o controlo é adicionado à página."""
         print("NesView: Controlo montado. A carregar dados...")
@@ -241,8 +237,8 @@ class NesView(ft.Column):
             self.show_error("Erro: Já existe uma Nota de Empenho com este número (2025NE...).")
         elif "duplicate key value violates unique constraint" in msg:
             self.show_error("Erro: Já existe um registo com este identificador único.")
-        elif "fetch failed" in msg or "Connection refused" in msg:
-            self.show_error("Erro de Rede: Não foi possível conectar ao banco de dados. Verifique sua internet.")
+        elif "fetch failed" in msg or "Connection refused" in msg or "Server disconnected" in msg:
+            self.show_error("Erro de Rede: Não foi possível conectar ao banco de dados. Tente atualizar a aba.")
         else:
             self.show_error(f"Erro inesperado ao {context}: {msg}")
 
@@ -295,10 +291,7 @@ class NesView(ft.Column):
         """
         print("NEs: A carregar NCs para o filtro...")
         try:
-            resposta_ncs = supabase.table('ncs_com_saldos') \
-                                   .select('id, numero_nc') \
-                                   .order('numero_nc', desc=False) \
-                                   .execute()
+            resposta_ncs = supabase.table('ncs_com_saldos').select('id, numero_nc').order('numero_nc', desc=False).execute()
 
             self.filtro_nc_vinculada.options.clear()
             self.filtro_nc_vinculada.options.append(ft.dropdown.Option(text="Todas as NCs", key=None))
@@ -315,7 +308,7 @@ class NesView(ft.Column):
             self.update()
 
         except Exception as ex:
-            # (NOVO) Adiciona traceback para debug
+            # (DEBUG LOTE 7)
             print("--- ERRO CRÍTICO (TRACEBACK) NO NES [load_nc_filter_options] ---")
             traceback.print_exc()
             print("----------------------------------------------------------------")
@@ -355,12 +348,11 @@ class NesView(ft.Column):
                 
             self.filtro_nd.disabled = False 
             
-            # (CORREÇÃO LOTE 5.4)
             if pi_selecionado is None:
                 self.update() 
                 
         except Exception as ex: 
-            # (NOVO) Adiciona traceback para debug
+            # (DEBUG LOTE 7)
             print("--- ERRO CRÍTICO (TRACEBACK) NO NES [load_pi_nd_filter_options] ---")
             traceback.print_exc()
             print("---------------------------------------------------------------------")
@@ -380,8 +372,6 @@ class NesView(ft.Column):
     def load_nes_data(self):
         print("NEs: A carregar dados com filtros...")
         self.progress_ring.visible = True
-        
-        # (CORREÇÃO LOTE 5.4)
         self.page.update()
 
         try:
@@ -445,7 +435,7 @@ class NesView(ft.Column):
             print("NEs: Dados carregados com sucesso.")
 
         except Exception as ex:
-            # (NOVO) Adiciona traceback para debug
+            # (DEBUG LOTE 7)
             print("--- ERRO CRÍTICO (TRACEBACK) NO NES [load_nes_data] ---")
             traceback.print_exc()
             print("---------------------------------------------------------")
@@ -453,8 +443,9 @@ class NesView(ft.Column):
             print(f"Erro ao carregar NEs: {ex}")
             self.handle_db_error(ex, "carregar Notas de Empenho")
         
-        self.progress_ring.visible = False
-        self.page.update()
+        finally: 
+            self.progress_ring.visible = False
+            self.page.update()
 
     def limpar_filtros(self, e):
         print("NEs: A limpar filtros...")

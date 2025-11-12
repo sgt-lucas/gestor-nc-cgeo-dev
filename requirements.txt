@@ -1,4 +1,5 @@
 altgraph==0.17.4
+annotated-doc==0.0.4
 annotated-types==0.7.0
 anyio==4.11.0
 arrow==1.4.0
@@ -13,13 +14,17 @@ cookiecutter==2.6.0
 cryptography==46.0.3
 deprecation==2.1.0
 et_xmlfile==2.0.0
-flet==0.28.3
+fastapi==0.121.1
+flet==0.70.0.dev6644
+flet-charts==0.70.0.dev6644
 flet-cli==0.28.3
 flet-desktop==0.28.3
+flet-web==0.28.3
 h11==0.16.0
 h2==4.3.0
 hpack==4.1.0
 httpcore==1.0.9
+httptools==0.7.1
 httpx==0.28.1
 hyperframe==6.1.0
 idna==3.11
@@ -27,6 +32,7 @@ Jinja2==3.1.6
 markdown-it-py==4.0.0
 MarkupSafe==3.0.3
 mdurl==0.1.2
+msgpack==1.1.2
 multidict==6.7.0
 numpy==2.3.4
 oauthlib==3.3.1
@@ -62,6 +68,7 @@ requests==2.32.5
 rich==14.2.0
 six==1.17.0
 sniffio==1.3.1
+starlette==0.49.3
 storage3==2.22.3
 StrEnum==0.4.15
 supabase==2.22.3
@@ -73,6 +80,8 @@ typing-inspection==0.4.2
 typing_extensions==4.15.0
 tzdata==2025.2
 urllib3==2.5.0
+uvicorn==0.38.0
 watchdog==4.0.2
+watchfiles==1.1.1
 websockets==15.0.1
 yarl==1.22.0

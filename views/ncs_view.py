@@ -1,9 +1,10 @@
 # views/ncs_view.py
-# (Versão 17.3 - Lote 5.4: Corrige "AssertionError")
+# (Versão 17.10 - Lote 8.4: Corrige AttributeError FilePickerResultEvent)
 
 import flet as ft
 from supabase_client import supabase # Cliente 'anon'
 from datetime import datetime
+import traceback 
 
 # --- IMPORTAÇÕES PARA PDF ---
 import pdfplumber
@@ -13,11 +14,10 @@ import re
 class NcsView(ft.Column):
     """
     Representa o conteúdo da aba Notas de Crédito (CRUD).
-    Versão 17.3 (Lote 5.4):
-    - (BUGFIX) Corrige "AssertionError" ao carregar filtros.
-    - Chamadas de 'load_filter_options' e 'load_ncs_data' movidas
-      do '__init__' para o novo evento 'on_mount'.
-    - (Item 1) ADICIONA MÁSCARA DE MOEDA
+    Versão 17.10 (Lote 8.4):
+    - (BUGFIX) Corrige "AttributeError: 'flet' has no attribute 'FilePickerResultEvent'".
+    - (Ponto 5) Adiciona Dropdown de 'Seção' ao modal e tabela.
+    - (Ponto 3 & 4) Adiciona 'Valor Inicial' e '% Empenhado'.
     """
     
     def __init__(self, page, on_data_changed=None, error_modal=None):
@@ -28,22 +28,33 @@ class NcsView(ft.Column):
         self.on_data_changed_callback = on_data_changed
         self.error_modal = error_modal
         
+        self.secoes_cache = {} 
+        
         self.alignment = ft.MainAxisAlignment.START
         self.spacing = 20
         self.padding = 20
         
+        self.scroll = ft.ScrollMode.ADAPTIVE
+        
         self.progress_ring = ft.ProgressRing(visible=True, width=32, height=32)
         
+        # --- (CORREÇÃO LOTE 8.4) ---
+        # Removida a pista de tipo de FilePickerResultEvent do on_result (para evitar o crash)
         self.file_picker_import = ft.FilePicker(
-            on_result=self.on_file_picker_result
+            on_result=self.on_file_picker_result 
         )
+        # --- FIM DA CORREÇÃO ---
         
+        # --- TABELA (Ponto 5) ---
         self.tabela_ncs = ft.DataTable(
             columns=[
                 ft.DataColumn(ft.Text("Número NC", weight=ft.FontWeight.BOLD)),
                 ft.DataColumn(ft.Text("PI", weight=ft.FontWeight.BOLD)),
+                ft.DataColumn(ft.Text("Seção", weight=ft.FontWeight.BOLD)), 
                 ft.DataColumn(ft.Text("Status", weight=ft.FontWeight.BOLD)),
-                ft.DataColumn(ft.Text("Saldo", weight=ft.FontWeight.BOLD), numeric=True),
+                ft.DataColumn(ft.Text("Valor Inicial", weight=ft.FontWeight.BOLD), numeric=True),
+                ft.DataColumn(ft.Text("Saldo Disp.", weight=ft.FontWeight.BOLD), numeric=True),
+                ft.DataColumn(ft.Text("% Empenhado", weight=ft.FontWeight.BOLD), numeric=True),
                 ft.DataColumn(ft.Text("Prazo Empenho", weight=ft.FontWeight.BOLD)),
                 ft.DataColumn(ft.Text("Observação", weight=ft.FontWeight.BOLD)), 
                 ft.DataColumn(ft.Text("Ações", weight=ft.FontWeight.BOLD)),
@@ -54,7 +65,7 @@ class NcsView(ft.Column):
             border_radius=8,
         )
 
-        # --- Modais: Controlos (Lote 5) ---
+        # --- Modais (Ponto 5) ---
         
         self.modal_txt_numero_nc = ft.TextField(
             label="Número da NC (6 dígitos)", 
@@ -62,6 +73,11 @@ class NcsView(ft.Column):
             input_filter=ft.InputFilter(r"[0-9]"), 
             max_length=6,                           
             keyboard_type=ft.KeyboardType.NUMBER
+        )
+        
+        self.modal_dd_secao = ft.Dropdown(
+            label="Seção (Opcional)",
+            options=[ft.dropdown.Option(text="Carregando...", disabled=True)],
         )
         
         self.modal_txt_data_recebimento = ft.TextField(label="Data Recebimento", hint_text="AAAA-MM-DD", read_only=True, expand=True)
@@ -135,6 +151,7 @@ class NcsView(ft.Column):
             content=ft.Column(
                 [
                     self.modal_txt_numero_nc,
+                    self.modal_dd_secao,
                     ft.Row(
                         [
                             self.modal_txt_data_recebimento, 
@@ -154,7 +171,7 @@ class NcsView(ft.Column):
                     ft.Row([self.modal_txt_pi, self.modal_txt_ug_gestora]),
                     self.modal_txt_observacao,
                 ], 
-                height=550, 
+                height=600, 
                 width=500, 
                 scroll=ft.ScrollMode.ADAPTIVE,
             ),
@@ -246,7 +263,8 @@ class NcsView(ft.Column):
             ft.Row([ self.filtro_pesquisa_nc, self.filtro_status, self.btn_limpar_filtros ]),
             ft.Row([ self.filtro_pi, self.filtro_nd ]),
             ft.Divider(),
-            ft.Container( content=self.tabela_ncs, expand=True )
+            # (CORREÇÃO LOTE 8.3) - Removido 'expand=True'
+            ft.Container( content=self.tabela_ncs, )
         ]
 
         self.page.overlay.append(self.modal_form)
@@ -257,19 +275,12 @@ class NcsView(ft.Column):
         self.page.overlay.append(self.date_picker_recebimento) 
         self.page.overlay.append(self.date_picker_validade)   
         
-        # --- (CORREÇÃO LOTE 5.4) ---
-        # 1. Adicionamos o evento 'on_mount'
         self.on_mount = self.on_view_mount
         
-        # 2. As chamadas de 'load' foram MOVIDAS
-        # self.load_filter_options()
-        # self.load_ncs_data()
-        # --- FIM DA CORREÇÃO ---
-        
-    # --- (NOVA FUNÇÃO LOTE 5.4) ---
     def on_view_mount(self, e):
         """Chamado pelo Flet DEPOIS que o controlo é adicionado à página."""
         print("NcsView: Controlo montado. A carregar dados...")
+        self.load_secoes_cache() # (NOVO - Ponto 5) Carrega o cache primeiro
         self.load_filter_options()
         self.load_ncs_data()
         
@@ -293,8 +304,8 @@ class NcsView(ft.Column):
             self.show_error("Erro: Já existe uma Nota de Crédito com este número (2025NC...).")
         elif "duplicate key value violates unique constraint" in msg:
             self.show_error("Erro: Já existe um registo com este identificador único.")
-        elif "fetch failed" in msg or "Connection refused" in msg:
-            self.show_error("Erro de Rede: Não foi possível conectar ao banco de dados. Verifique sua internet.")
+        elif "fetch failed" in msg or "Connection refused" in msg or "Server disconnected" in msg:
+            self.show_error("Erro de Rede: Não foi possível conectar ao banco de dados. Tente atualizar a aba.")
         else:
             self.show_error(f"Erro inesperado ao {context}: {msg}")
 
@@ -318,7 +329,6 @@ class NcsView(ft.Column):
         except (ValueError, TypeError): 
             return "0,00"
             
-    # (LOTE 5)
     def format_currency_input(self, e: ft.ControlEvent):
         """Formata o valor monetário_automaticamente ao digitar."""
         try:
@@ -362,6 +372,44 @@ class NcsView(ft.Column):
         e.control.open = False
         self.modal_txt_data_validade.update()
         
+    # --- (NOVO - Ponto 5) Funções de Seção ---
+    
+    def load_secoes_cache(self):
+        """Carrega o cache de ID/Nome das seções para a tabela."""
+        print("NcsView: A carregar cache de seções...")
+        try:
+            # Usamos o cliente 'anon' (supabase) pois todos podem ler seções
+            resposta = supabase.table('secoes').select('id, nome').execute()
+            if resposta.data:
+                self.secoes_cache = {secao['id']: secao['nome'] for secao in resposta.data}
+                print("NcsView: Cache de seções carregado.")
+        except Exception as ex:
+            print("--- ERRO CRÍTICO (TRACEBACK) NO NCS [load_secoes_cache] ---")
+            traceback.print_exc()
+            self.handle_db_error(ex, "carregar cache de seções")
+            
+    def load_secoes_para_dropdown(self):
+        """Carrega as seções (do cache) para o Dropdown do modal."""
+        try:
+            self.modal_dd_secao.options.clear()
+            self.modal_dd_secao.options.append(ft.dropdown.Option(text="Nenhuma", key=None))
+            
+            if not self.secoes_cache:
+                print("NcsView: Cache de seções vazio, a recarregar...")
+                self.load_secoes_cache() # Tenta carregar de novo
+
+            for secao_id, secao_nome in self.secoes_cache.items():
+                self.modal_dd_secao.options.append(
+                    ft.dropdown.Option(text=secao_nome, key=secao_id)
+                )
+            self.modal_dd_secao.update()
+            
+        except Exception as ex:
+            print(f"Erro ao carregar seções no dropdown: {ex}")
+            self.show_error(f"Erro ao carregar seções: {ex}")
+            
+    # --- Fim (Ponto 5) ---
+        
     def load_filter_options(self, pi_selecionado=None):
         try:
             if pi_selecionado is None:
@@ -394,13 +442,10 @@ class NcsView(ft.Column):
                 
             self.filtro_nd.disabled = False 
             
-            # (CORREÇÃO LOTE 5.4)
             if pi_selecionado is None:
                 self.update() 
                 
         except Exception as ex: 
-            # (NOVO) Adiciona traceback para debug
-            import traceback
             print("--- ERRO CRÍTICO (TRACEBACK) NO NCS [load_filter_options] ---")
             traceback.print_exc()
             print("---------------------------------------------------------------")
@@ -430,12 +475,17 @@ class NcsView(ft.Column):
     def load_ncs_data(self):
         print("NCs: A carregar dados com filtros...")
         self.progress_ring.visible = True
-        
-        # (CORREÇÃO LOTE 5.4) - É seguro chamar 'update()'
         self.page.update()
         
         try:
-            query = supabase.table('ncs_com_saldos').select('id, numero_nc, pi, natureza_despesa, status_calculado, valor_inicial, saldo_disponivel, data_validade_empenho, data_recebimento, ptres, fonte, ug_gestora, observacao')
+            # (MODIFICADO - Pontos 3, 4, 5)
+            query = supabase.table('ncs_com_saldos').select(
+                'id, numero_nc, pi, natureza_despesa, status_calculado, '
+                'valor_inicial, saldo_disponivel, total_empenhado, id_secao, ' 
+                'data_validade_empenho, data_recebimento, ptres, fonte, '
+                'ug_gestora, observacao'
+            )
+            
             if self.filtro_pesquisa_nc.value: 
                 query = query.ilike('numero_nc', f"%{self.filtro_pesquisa_nc.value}%")
             if self.filtro_status.value: 
@@ -452,15 +502,32 @@ class NcsView(ft.Column):
                     data_val = datetime.fromisoformat(nc['data_validade_empenho']).strftime('%d/%m/%Y')
                     
                     obs_texto = nc.get('observacao', '')
-                    obs_curta = (obs_texto[:30] + '...') if len(obs_texto) > 30 else obs_texto
+                    obs_curta = (obs_texto[:30] + '...') if len(obs_texto) > 30 else obs_curta
+                    
+                    # (Ponto 4) Cálculo da Percentagem
+                    valor_ini = float(nc.get('valor_inicial', 0))
+                    total_emp = float(nc.get('total_empenhado', 0)) 
+                    
+                    if valor_ini > 0:
+                        percentual = (total_emp / valor_ini) * 100
+                        percentual_str = f"{percentual:.1f}%"
+                    else:
+                        percentual_str = "N/A"
+                    
+                    # (Ponto 5) Obter nome da Seção
+                    secao_id = nc.get('id_secao')
+                    secao_nome = self.secoes_cache.get(secao_id, "N/A") # Usa o cache
                     
                     self.tabela_ncs.rows.append(
                         ft.DataRow(
                             cells=[
                                 ft.DataCell(ft.Text(nc.get('numero_nc', ''))),
                                 ft.DataCell(ft.Text(nc.get('pi', ''))),
+                                ft.DataCell(ft.Text(secao_nome)), # <-- (NOVO - Ponto 5)
                                 ft.DataCell(ft.Text(nc.get('status_calculado', ''))),
+                                ft.DataCell(ft.Text(self.formatar_moeda(valor_ini))),
                                 ft.DataCell(ft.Text(self.formatar_moeda(nc.get('saldo_disponivel')), weight=ft.FontWeight.BOLD)),
+                                ft.DataCell(ft.Text(percentual_str)),
                                 ft.DataCell(ft.Text(data_val)),
                                 ft.DataCell(ft.Text(obs_curta, tooltip=obs_texto)),
                                 ft.DataCell(
@@ -481,12 +548,13 @@ class NcsView(ft.Column):
                         ft.DataCell(ft.Text("")), ft.DataCell(ft.Text("")), 
                         ft.DataCell(ft.Text("")), ft.DataCell(ft.Text("")),
                         ft.DataCell(ft.Text("")), ft.DataCell(ft.Text("")),
+                        ft.DataCell(ft.Text("")), ft.DataCell(ft.Text("")),
+                        ft.DataCell(ft.Text("")), 
                     ])
                 )
             print("NCs: Dados carregados com sucesso.")
+            
         except Exception as ex: 
-            # (NOVO) Adiciona traceback para debug
-            import traceback
             print("--- ERRO CRÍTICO (TRACEBACK) NO NCS [load_ncs_data] ---")
             traceback.print_exc()
             print("---------------------------------------------------------")
@@ -494,8 +562,9 @@ class NcsView(ft.Column):
             print(f"Erro ao carregar NCs: {ex}")
             self.handle_db_error(ex, "carregar NCs")
             
-        self.progress_ring.visible = False
-        self.page.update()
+        finally: 
+            self.progress_ring.visible = False
+            self.page.update()
         
     def open_add_modal(self, e):
         print("A abrir modal de ADIÇÃO...")
@@ -503,6 +572,9 @@ class NcsView(ft.Column):
         self.modal_form.title = ft.Text("Adicionar Nova Nota de Crédito")
         self.modal_form_btn_salvar.text = "Salvar"
         self.modal_form_btn_salvar.icon = "SAVE"
+        
+        # (NOVO - Ponto 5) Carrega o dropdown
+        self.load_secoes_para_dropdown()
         
         self.modal_txt_numero_nc.value = "" 
         self.modal_txt_data_recebimento.value = ""
@@ -514,11 +586,12 @@ class NcsView(ft.Column):
         self.modal_txt_pi.value = ""
         self.modal_txt_ug_gestora.value = ""
         self.modal_txt_observacao.value = ""
+        self.modal_dd_secao.value = None # (NOVO - Ponto 5)
         
         for campo in [self.modal_txt_numero_nc, self.modal_txt_data_recebimento, self.modal_txt_data_validade,
                       self.modal_txt_valor_inicial, self.modal_txt_ptres, self.modal_txt_nd,
                       self.modal_txt_fonte, self.modal_txt_pi, self.modal_txt_ug_gestora,
-                      self.modal_txt_observacao]:
+                      self.modal_txt_observacao, self.modal_dd_secao]: # (Ponto 5)
             campo.error_text = None
             
         self.modal_form.open = True
@@ -531,6 +604,9 @@ class NcsView(ft.Column):
         self.modal_form.title = ft.Text(f"Editar NC: {nc['numero_nc']}")
         self.modal_form_btn_salvar.text = "Atualizar"
         self.modal_form_btn_salvar.icon = "UPDATE"
+        
+        # (NOVO - Ponto 5) Carrega o dropdown
+        self.load_secoes_para_dropdown()
 
         numero_nc_sem_prefixo = nc.get('numero_nc', '').upper().replace("2025NC", "")
         self.modal_txt_numero_nc.value = numero_nc_sem_prefixo
@@ -544,11 +620,12 @@ class NcsView(ft.Column):
         self.modal_txt_pi.value = nc.get('pi', '')
         self.modal_txt_ug_gestora.value = nc.get('ug_gestora', '')
         self.modal_txt_observacao.value = nc.get('observacao', '')
+        self.modal_dd_secao.value = nc.get('id_secao') # (NOVO - Ponto 5)
         
         for campo in [self.modal_txt_numero_nc, self.modal_txt_data_recebimento, self.modal_txt_data_validade,
                       self.modal_txt_valor_inicial, self.modal_txt_ptres, self.modal_txt_nd,
                       self.modal_txt_fonte, self.modal_txt_pi, self.modal_txt_ug_gestora,
-                      self.modal_txt_observacao]:
+                      self.modal_txt_observacao, self.modal_dd_secao]: # (Ponto 5)
             campo.error_text = None
             
         self.modal_form.open = True
@@ -560,7 +637,7 @@ class NcsView(ft.Column):
         self.page.update()
 
     def save_nc(self, e):
-        """ Salva (INSERT) ou Atualiza (UPDATE) uma NC (V17.3). """
+        """ Salva (INSERT) ou Atualiza (UPDATE) uma NC (V17.7). """
         
         # 1. Validação
         try:
@@ -580,6 +657,7 @@ class NcsView(ft.Column):
             
             if not self.modal_txt_numero_nc.value or len(self.modal_txt_numero_nc.value) != 6:
                 self.modal_txt_numero_nc.error_text = "Deve ter 6 dígitos"
+                    
                 has_error = True
 
             if has_error:
@@ -600,7 +678,8 @@ class NcsView(ft.Column):
                 "fonte": self.modal_txt_fonte.value.strip(),
                 "pi": self.modal_txt_pi.value.strip(),
                 "ug_gestora": self.modal_txt_ug_gestora.value.strip(),
-                "observacao": self.modal_txt_observacao.value.strip()
+                "observacao": self.modal_txt_observacao.value.strip(),
+                "id_secao": self.modal_dd_secao.value, # (NOVO - Ponto 5)
             }
         except Exception as ex_validation:
             print(f"Erro na validação de dados: {ex_validation}")
@@ -628,6 +707,7 @@ class NcsView(ft.Column):
             self.show_success_snackbar(msg_sucesso)
             
             self.close_modal(None)
+            self.load_secoes_cache() # (Ponto 5) Recarrega o cache para a tabela
             self.load_filter_options() 
             self.load_ncs_data() 
             if self.on_data_changed_callback:
@@ -767,6 +847,7 @@ class NcsView(ft.Column):
             self.show_success_snackbar("Recolhimento de saldo registado com sucesso!")
             
             self.close_recolhimento_modal(None)
+            self.load_secoes_cache() # Recarrega o cache (embora não seja essencial, é seguro)
             self.load_ncs_data() 
             if self.on_data_changed_callback:
                 self.on_data_changed_callback(None) 
@@ -779,7 +860,7 @@ class NcsView(ft.Column):
             self.modal_rec_loading_ring.visible = False
             self.modal_rec_btn_cancelar.disabled = False
             self.modal_rec_btn_salvar.disabled = False
-            self.recolhimento_modal.update()
+            self.modal_rec_loading_ring.update()
                  
     def open_confirm_delete_nc(self, nc):
         nc_id = nc.get('id')
@@ -812,6 +893,7 @@ class NcsView(ft.Column):
             self.show_success_snackbar("Nota de Crédito excluída com sucesso.")
             
             self.close_confirm_delete_nc(None)
+            self.load_secoes_cache() 
             self.load_filter_options() 
             self.load_ncs_data() 
             if self.on_data_changed_callback:
@@ -824,7 +906,7 @@ class NcsView(ft.Column):
             
     # --- FUNÇÕES DE IMPORTAÇÃO DE PDF (V14 - Adiciona Observação) ---
 
-    def on_file_picker_result(self, e: ft.FilePickerResultEvent):
+    def on_file_picker_result(self, e): # <-- Removido o type hint 'ft.FilePickerResultEvent'
         if e.files:
             file_path = e.files[0].path
             print(f"A processar ficheiro PDF: {file_path}")
@@ -842,12 +924,12 @@ class NcsView(ft.Column):
                     
             except Exception as ex:
                 print(f"Erro ao processar o PDF: {ex}")
-                import traceback
                 traceback.print_exc()
                 self.show_error(f"Erro ao ler o ficheiro PDF: {ex}")
             
-            self.progress_ring.visible = False
-            self.update()
+            finally: 
+                self.progress_ring.visible = False
+                self.update()
 
     def _parse_siafi_pdf(self, file_path: str):
         texto_completo = ""
@@ -915,7 +997,7 @@ class NcsView(ft.Column):
                 dados_nc['data_validade'] = dados_nc['data_recebimento']
                 print("Campo <Prazo Empenho> encontrado: empenho imediato")
             else:
-                prazo_str = extrair(r'EMPH ATÉ\s*([\d\w\.]+)', obs_texto_completo, "Prazo Empenho")
+                prazo_str = extrair(r'EMPH ATÉ\s*([\d\w\.]+)', texto_completo, "Prazo Empenho")
                 if prazo_str:
                     dados_nc['data_validade'] = formatar_data(prazo_str, ano_base_str=dados_nc['data_recebimento'])
         else:

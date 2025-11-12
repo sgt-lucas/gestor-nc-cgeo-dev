@@ -1,13 +1,11 @@
 # main.py
-# (Versão Lote 6 - Pronto para Web)
+# (Versão Lote 8.4 - Corrige TypeError: ColorScheme)
 
 import flet as ft
-import os # <-- (NOVO) Necessário para a porta do servidor
-import traceback # <-- (Mantido) Para debug de login
+import os 
+import traceback 
 
-# Importa AMBOS os clientes
 from supabase_client import supabase, supabase_admin 
-# Importação correta da biblioteca de auth
 from supabase_auth.errors import AuthApiError 
 
 # Importa as nossas "views" (abas)
@@ -52,8 +50,6 @@ class ErrorModal:
         self.dialog.open = False
         self.page.update()
 
-# --- Fim (LOTE 3) ---
-
 
 def main(page: ft.Page):
     
@@ -63,7 +59,7 @@ def main(page: ft.Page):
         color_scheme=ft.ColorScheme(
             primary="green800",
             primary_container="green900",
-            background="grey100",
+            # background="grey100", <-- REMOVIDO
             surface="white",
         )
     )
@@ -230,7 +226,6 @@ def main(page: ft.Page):
             password_field.disabled = False
             error_modal_global.show(f"Utilizador ou senha inválidos.")
         except Exception as ex:
-            # (LOTE 5.2) Adiciona traceback para apanhar erros de "crash"
             print("--- ERRO CRÍTICO INESPERADO (TRACEBACK) ---")
             traceback.print_exc()
             print("---------------------------------------------")
@@ -292,15 +287,13 @@ def main(page: ft.Page):
 # --- (MODIFICADO LOTE 6) Executar a Aplicação (Modo Web) ---
 if __name__ == "__main__":
     
-    # Define a porta. O Render espera a porta 10000.
-    # Para testes locais, usa 8550 se a porta do Render não estiver definida.
     port = int(os.environ.get("PORT", 8550))
     
     print(f"A iniciar aplicação web na porta: {port}")
     
     ft.app(
         target=main, 
-        view=ft.AppView.WEB_BROWSER, # <-- MUITO IMPORTANTE
+        view=ft.AppView.WEB_BROWSER, 
         assets_dir="assets",
         port=port
     )

@@ -1,11 +1,11 @@
 # views/relatorios_view.py
-# (Versão 4.1 - Lote 5.4: Corrige "AssertionError")
+# (Versão 4.4 - Lote 8.4: Corrige AttributeError FilePickerResultEvent)
 
 import flet as ft
 from supabase_client import supabase # Cliente 'anon'
 from datetime import datetime, date
 import pandas as pd
-import traceback # <-- (NOVO) ADICIONADO PARA DEBUG
+import traceback 
 
 # (LOTE 3, Item 6) - Importações necessárias do ReportLab para quebra de texto
 from reportlab.lib.pagesizes import letter, landscape
@@ -18,11 +18,9 @@ from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_LEFT # (LOTE 3)
 class RelatoriosView(ft.Column):
     """
     Representa o conteúdo da aba Relatórios.
-    Versão 4.1 (Lote 5.4):
-    - (BUGFIX) Corrige "AssertionError" ao carregar filtros.
-    - Chamada de 'load_all_filters' movida do '__init__' para 'on_mount'.
-    - (Item 11) Substitui show_snackbar pelo novo self.error_modal.
-    - (Item 6) Corrige layout quebrado de PDFs (quebra de linha automática).
+    Versão 4.4 (Lote 8.4):
+    - (BUGFIX) Corrige "AttributeError: module 'flet' has no attribute 'FilePickerResultEvent'".
+    - (BUGFIX) Mantém as correções de Scroll e Loading.
     """
     
     def __init__(self, page, error_modal=None):
@@ -32,6 +30,10 @@ class RelatoriosView(ft.Column):
         self.spacing = 20
         self.padding = 20
         self.error_modal = error_modal
+        
+        # --- (CORREÇÃO LOTE 8.3) ---
+        self.scroll = ft.ScrollMode.ADAPTIVE # <-- MANTIDO
+        # --- FIM DA CORREÇÃO ---
         
         self.progress_ring = ft.ProgressRing(visible=False, width=32, height=32)
 
@@ -106,15 +108,9 @@ class RelatoriosView(ft.Column):
             ft.Row([self.btn_gerar_excel_extrato, self.btn_gerar_pdf_extrato], alignment=ft.MainAxisAlignment.CENTER),
         ]
 
-        # --- (CORREÇÃO LOTE 5.4) ---
-        # 1. Adicionamos o evento 'on_mount'
+        # (CORREÇÃO LOTE 8.3)
         self.on_mount = self.on_view_mount
         
-        # 2. As chamadas de 'load' foram MOVIDAS
-        # self.load_all_filters()
-        # --- FIM DA CORREÇÃO ---
-        
-    # --- (NOVA FUNÇÃO LOTE 5.4) ---
     def on_view_mount(self, e):
         """Chamado pelo Flet DEPOIS que o controlo é adicionado à página."""
         print("RelatoriosView: Controlo montado. A carregar dados...")
@@ -136,8 +132,8 @@ class RelatoriosView(ft.Column):
         msg = str(ex)
         print(f"Erro de DB Bruto ({context}): {msg}") # Manter no log
         
-        if "fetch failed" in msg or "Connection refused" in msg:
-            self.show_error("Erro de Rede: Não foi possível conectar ao banco de dados. Verifique sua internet.")
+        if "fetch failed" in msg or "Connection refused" in msg or "Server disconnected" in msg:
+            self.show_error("Erro de Rede: Não foi possível conectar ao banco de dados. Tente atualizar a aba.")
         else:
             self.show_error(f"Erro inesperado ao {context}: {msg}")
 
@@ -187,10 +183,15 @@ class RelatoriosView(ft.Column):
             self.load_all_filters()
             self.show_success_snackbar("Filtros atualizados com sucesso.")
         except Exception as ex:
+            # (DEBUG LOTE 7)
+            print("--- ERRO CRÍTICO (TRACEBACK) NO RELATORIOS [load_all_filters_wrapper] ---")
+            traceback.print_exc()
+            print("--------------------------------------------------------------------------")
             self.handle_db_error(ex, "recarregar filtros")
-
-        self.progress_ring.visible = False
-        self.update()
+            
+        finally: # (BUGFIX LOTE 7)
+            self.progress_ring.visible = False
+            self.update()
         
     def load_all_filters(self):
         """Função unificada para carregar todos os dropdowns."""
@@ -225,12 +226,11 @@ class RelatoriosView(ft.Column):
                 
             self.filtro_nd.disabled = False
             
-            # (CORREÇÃO LOTE 5.4)
             if pi_selecionado is None:
                 self.update()
                 
         except Exception as ex: 
-            # (NOVO) Adiciona traceback para debug
+            # (DEBUG LOTE 7)
             print("--- ERRO CRÍTICO (TRACEBACK) NO RELATORIOS [load_filter_options] ---")
             traceback.print_exc()
             print("---------------------------------------------------------------------")
@@ -253,7 +253,7 @@ class RelatoriosView(ft.Column):
         self.load_filter_options(pi_selecionado=None) 
         self.page.update() if self.page else None
         
-    def fetch_report_data_geral(self):
+    def fetch_report_data_geral(self, e): # <-- Adicionado 'e' para compatibilidade
         """Busca os dados das NCs para o Relatório Geral, aplicando filtros."""
         print("Relatórios: A buscar dados para Relatório Geral...")
         self.progress_ring.visible = True; self.update()
@@ -274,14 +274,15 @@ class RelatoriosView(ft.Column):
                 print("Relatórios: Nenhum registo encontrado.");
                 self.page.snack_bar = ft.SnackBar(ft.Text("Nenhum registo encontrado com estes filtros."), bgcolor="orange")
                 self.page.snack_bar.open = True
-                self.progress_ring.visible = False; 
-                self.page.update()
                 return None
+                
         except Exception as ex: 
             print(f"Erro ao buscar dados (Geral): {ex}"); 
             self.handle_db_error(ex, "buscar dados do Relatório Geral") 
-            self.progress_ring.visible = False; self.update(); 
             return None
+            
+        finally: # (BUGFIX LOTE 7)
+            self.progress_ring.visible = False; self.update()
 
     def fetch_report_data_extrato(self, nc_id):
         """Busca os dados detalhados (NC, NEs, Recolhimentos) para uma NC específica."""
@@ -293,7 +294,6 @@ class RelatoriosView(ft.Column):
             if not nc_data.data: 
                 print("NC não encontrada."); 
                 self.show_error("NC selecionada não encontrada."); 
-                self.progress_ring.visible = False; self.update(); 
                 return None
             
             nes_data = supabase.table('notas_de_empenho').select('*').eq('id_nc', nc_id).order('data_empenho', desc=True).execute()
@@ -302,11 +302,14 @@ class RelatoriosView(ft.Column):
             
             print("Dados do Extrato carregados.")
             return { "nc": nc_data.data, "nes": nes_data.data if nes_data.data else [], "recolhimentos": recolhimentos_data.data if recolhimentos_data.data else [] }
+            
         except Exception as ex: 
             print(f"Erro ao buscar dados (Extrato): {ex}"); 
             self.handle_db_error(ex, "buscar dados do Extrato")
-            self.progress_ring.visible = False; self.update(); 
             return None
+            
+        finally: # (BUGFIX LOTE 7)
+            self.progress_ring.visible = False; self.update()
         
     def load_nc_list_for_statement_filter(self):
         """Busca todas as NCs (ID e Numero) para preencher o dropdown de seleção do Extrato."""
@@ -330,7 +333,7 @@ class RelatoriosView(ft.Column):
             self.update()
 
         except Exception as ex:
-            # (NOVO) Adiciona traceback para debug
+            # (DEBUG LOTE 7)
             print("--- ERRO CRÍTICO (TRACEBACK) NO RELATORIOS [load_nc_list_for_statement_filter] ---")
             traceback.print_exc()
             print("----------------------------------------------------------------------------------")
@@ -339,12 +342,15 @@ class RelatoriosView(ft.Column):
             self.handle_db_error(ex, "carregar lista de NCs")
             
     # --- Funções de Geração e Salvamento (Lote 3) ---
+    
+    # --- (CORREÇÃO LOTE 8.3) ---
     def gerar_relatorio_geral_excel(self, e):
+    # --- FIM DA CORREÇÃO ---
         """Inicia a geração do relatório Excel GERAL."""
         self.progress_ring.visible = True
         self.update()
         
-        dados = self.fetch_report_data_geral()
+        dados = self.fetch_report_data_geral(e)
         if dados:
             try:
                 df = pd.DataFrame(dados)
@@ -361,18 +367,24 @@ class RelatoriosView(ft.Column):
             except Exception as ex_pandas: 
                 print(f"Erro (Excel Geral): {ex_pandas}"); 
                 self.show_error(f"Erro ao gerar Excel: {ex_pandas}")
-                self.progress_ring.visible = False; self.update()
+                
+        # (BUGFIX LOTE 7)
+        self.progress_ring.visible = False; self.update()
 
     def gerar_relatorio_geral_pdf(self, e):
         """Inicia a geração do relatório PDF GERAL."""
         self.progress_ring.visible = True
         self.update()
         
-        dados = self.fetch_report_data_geral()
+        dados = self.fetch_report_data_geral(e)
         if dados:
             self.dados_relatorio_para_salvar = dados 
             self.tipo_ficheiro_a_salvar = "pdf_geral"
             if self.save_file_dialog: self.save_file_dialog.save_file( dialog_title="Salvar Relatório Geral PDF", file_name="relatorio_geral_ncs.pdf", allowed_extensions=["pdf"] )
+        
+        # (BUGFIX LOTE 7)
+        self.progress_ring.visible = False; self.update()
+
 
     def gerar_extrato_excel(self, e):
         """Inicia a geração do relatório Excel TIPO EXTRATO."""
@@ -419,7 +431,9 @@ class RelatoriosView(ft.Column):
             except Exception as ex_pandas: 
                 print(f"Erro (Extrato Excel): {ex_pandas}"); 
                 self.show_error(f"Erro ao gerar Excel: {ex_pandas}")
-                self.progress_ring.visible = False; self.update()
+                
+        # (BUGFIX LOTE 7)
+        self.progress_ring.visible = False; self.update()
 
     def gerar_extrato_pdf(self, e):
         """Inicia a geração do relatório PDF TIPO EXTRATO."""
@@ -440,162 +454,166 @@ class RelatoriosView(ft.Column):
             self.id_nc_extrato_selecionada = nc_id_selecionada
             nc_numero_sanitizado = dados['nc'].get('numero_nc', 'extrato').replace('/', '_').replace('\\', '_')
             if self.save_file_dialog: self.save_file_dialog.save_file( dialog_title="Salvar Extrato PDF", file_name=f"extrato_{nc_numero_sanitizado}.pdf", allowed_extensions=["pdf"] )
+            
+        # (BUGFIX LOTE 7)
+        self.progress_ring.visible = False; self.update()
 
-    def handle_save_file_result(self, e: ft.FilePickerResultEvent):
+    def handle_save_file_result(self, e): # <-- CORRIGIDO AQUI
         """Chamado DEPOIS que o utilizador escolhe onde salvar."""
         
-        if e.path and self.dados_relatorio_para_salvar is not None and self.tipo_ficheiro_a_salvar:
-            caminho_salvar = e.path
-            print(f"A salvar relatório ({self.tipo_ficheiro_a_salvar}) em: {caminho_salvar}")
-            
-            try:
-                styles = getSampleStyleSheet()
-                style_normal = styles['Normal']
-                style_normal.alignment = TA_LEFT
-                style_normal.fontSize = 8
-                style_right = ParagraphStyle(name='Right', parent=style_normal, alignment=TA_RIGHT)
-                style_header = ParagraphStyle(name='Header', parent=style_normal, alignment=TA_CENTER, fontName='Helvetica-Bold', textColor=colors.whitesmoke, fontSize=9)
-                style_center = ParagraphStyle(name='Center', parent=style_normal, alignment=TA_CENTER)
-                style_title = styles['Heading1']
-                style_title.alignment = TA_CENTER
-                style_heading2 = styles['Heading2']
+        self.progress_ring.visible = True
+        self.update()
+        
+        try:
+            if e.path and self.dados_relatorio_para_salvar is not None and self.tipo_ficheiro_a_salvar:
+                caminho_salvar = e.path
+                print(f"A salvar relatório ({self.tipo_ficheiro_a_salvar}) em: {caminho_salvar}")
                 
-                
-                # --- EXCEL GERAL ---
-                if self.tipo_ficheiro_a_salvar == "excel_geral":
-                    df_to_save: pd.DataFrame = self.dados_relatorio_para_salvar
-                    if 'Valor Inicial' in df_to_save.columns: df_to_save['Valor Inicial'] = pd.to_numeric(df_to_save['Valor Inicial'], errors='coerce').fillna(0)
-                    if 'Saldo Disponível' in df_to_save.columns: df_to_save['Saldo Disponível'] = pd.to_numeric(df_to_save['Saldo Disponível'], errors='coerce').fillna(0)
-                    df_to_save.to_excel(caminho_salvar, index=False, engine='openpyxl')
-                    self.show_success_snackbar(f"Relatório Excel Geral salvo!")
+                try:
+                    styles = getSampleStyleSheet()
+                    style_normal = styles['Normal']
+                    style_normal.alignment = TA_LEFT
+                    style_normal.fontSize = 8
+                    style_right = ParagraphStyle(name='Right', parent=style_normal, alignment=TA_RIGHT)
+                    style_header = ParagraphStyle(name='Header', parent=style_normal, alignment=TA_CENTER, fontName='Helvetica-Bold', textColor=colors.whitesmoke, fontSize=9)
+                    style_center = ParagraphStyle(name='Center', parent=style_normal, alignment=TA_CENTER)
+                    style_title = styles['Heading1']
+                    style_title.alignment = TA_CENTER
+                    style_heading2 = styles['Heading2']
+                    
+                    
+                    # --- EXCEL GERAL ---
+                    if self.tipo_ficheiro_a_salvar == "excel_geral":
+                        df_to_save: pd.DataFrame = self.dados_relatorio_para_salvar
+                        if 'Valor Inicial' in df_to_save.columns: df_to_save['Valor Inicial'] = pd.to_numeric(df_to_save['Valor Inicial'], errors='coerce').fillna(0)
+                        if 'Saldo Disponível' in df_to_save.columns: df_to_save['Saldo Disponível'] = pd.to_numeric(df_to_save['Saldo Disponível'], errors='coerce').fillna(0)
+                        df_to_save.to_excel(caminho_salvar, index=False, engine='openpyxl')
+                        self.show_success_snackbar(f"Relatório Excel Geral salvo!")
 
-                # --- PDF GERAL (LOTE 3, Item 6 - Corrigido) ---
-                elif self.tipo_ficheiro_a_salvar == "pdf_geral":
-                    doc = SimpleDocTemplate(caminho_salvar, pagesize=landscape(letter)); story = [];
-                    story.append(Paragraph("Relatório Geral de Notas de Crédito", style_title)); story.append(Spacer(1, 0.2*inch))
-                    filtros_str = "Filtros Aplicados: "; 
-                    if self.filtro_data_inicio.value: filtros_str += f"Data Rec. Início: {self.filtro_data_inicio.value}, "; 
-                    if self.filtro_data_fim.value: filtros_str += f"Data Rec. Fim: {self.filtro_data_fim.value}, "; 
-                    if self.filtro_pi.value: filtros_str += f"PI: {self.filtro_pi.value}, "; 
-                    if self.filtro_nd.value: filtros_str += f"ND: {self.filtro_nd.value}, "; 
-                    if self.filtro_status.value: filtros_str += f"Status: {self.filtro_status.value}"; 
-                    if filtros_str == "Filtros Aplicados: ": filtros_str += "Nenhum"
-                    story.append(Paragraph(filtros_str, styles['Normal'])); story.append(Spacer(1, 0.2*inch))
-                    
-                    header = [Paragraph(h, style_header) for h in ['Número NC', 'PI', 'ND', 'Status', 'Valor Inicial', 'Saldo', 'Prazo Empenho', 'UG Gestora', 'Data Receb.', 'Observação']]
-                    pdf_data = [header]
-                    dados_pdf = self.dados_relatorio_para_salvar
-                    
-                    for item in dados_pdf: 
-                        data_rec = datetime.fromisoformat(item.get('data_recebimento', '')).strftime('%d/%m/%Y') if item.get('data_recebimento') else ''
-                        prazo_emp = datetime.fromisoformat(item.get('data_validade_empenho', '')).strftime('%d/%m/%Y') if item.get('data_validade_empenho') else ''
-                        row = [ 
-                            Paragraph(item.get('numero_nc', ''), style_center), 
-                            Paragraph(item.get('pi', ''), style_center), 
-                            Paragraph(item.get('natureza_despesa', ''), style_center), 
-                            Paragraph(item.get('status_calculado', ''), style_center), 
-                            Paragraph(self.formatar_moeda(item.get('valor_inicial')), style_right), 
-                            Paragraph(self.formatar_moeda(item.get('saldo_disponivel')), style_right), 
-                            Paragraph(prazo_emp, style_center), 
-                            Paragraph(item.get('ug_gestora', ''), style_center), 
-                            Paragraph(data_rec, style_center), 
-                            Paragraph(item.get('observacao', ''), style_normal) # <-- (Item 6) Quebra de linha
-                        ]
-                        pdf_data.append(row) 
+                    # --- PDF GERAL (LOTE 3, Item 6 - Corrigido) ---
+                    elif self.tipo_ficheiro_a_salvar == "pdf_geral":
+                        doc = SimpleDocTemplate(caminho_salvar, pagesize=landscape(letter)); story = [];
+                        story.append(Paragraph("Relatório Geral de Notas de Crédito", style_title)); story.append(Spacer(1, 0.2*inch))
+                        filtros_str = "Filtros Aplicados: "; 
+                        if self.filtro_data_inicio.value: filtros_str += f"Data Rec. Início: {self.filtro_data_inicio.value}, "; 
+                        if self.filtro_data_fim.value: filtros_str += f"Data Rec. Fim: {self.filtro_data_fim.value}, "; 
+                        if self.filtro_pi.value: filtros_str += f"PI: {self.filtro_pi.value}, "; 
+                        if self.filtro_nd.value: filtros_str += f"ND: {self.filtro_nd.value}, "; 
+                        if self.filtro_status.value: filtros_str += f"Status: {self.filtro_status.value}"; 
+                        if filtros_str == "Filtros Aplicados: ": filtros_str += "Nenhum"
+                        story.append(Paragraph(filtros_str, styles['Normal'])); story.append(Spacer(1, 0.2*inch))
                         
-                    col_widths = [1.2*inch, 0.7*inch, 0.7*inch, 0.7*inch, 1.0*inch, 1.0*inch, 0.8*inch, 0.7*inch, 0.8*inch, 2.4*inch]
-                    
-                    table = Table(pdf_data, repeatRows=1, colWidths=col_widths) 
-                    style = TableStyle([ 
-                        ('BACKGROUND', (0, 0), (-1, 0), colors.grey), 
-                        ('VALIGN', (0, 0), (-1, -1), 'TOP'), # (Item 6) Alinha tudo ao topo
-                        ('GRID', (0, 0), (-1, -1), 1, colors.black), 
-                        ('BACKGROUND', (0, 1), (-1, -1), colors.beige), 
-                    ])
-                    table.setStyle(style); story.append(table)
-                    doc.build(story)
-                    self.show_success_snackbar(f"Relatório PDF Geral salvo!")
+                        header = [Paragraph(h, style_header) for h in ['Número NC', 'PI', 'ND', 'Status', 'Valor Inicial', 'Saldo', 'Prazo Empenho', 'UG Gestora', 'Data Receb.', 'Observação']]
+                        pdf_data = [header]
+                        dados_pdf = self.dados_relatorio_para_salvar
+                        
+                        for item in dados_pdf: 
+                            data_rec = datetime.fromisoformat(item.get('data_recebimento', '')).strftime('%d/%m/%Y') if item.get('data_recebimento') else ''
+                            prazo_emp = datetime.fromisoformat(item.get('data_validade_empenho', '')).strftime('%d/%m/%Y') if item.get('data_validade_empenho') else ''
+                            row = [ 
+                                Paragraph(item.get('numero_nc', ''), style_center), 
+                                Paragraph(item.get('pi', ''), style_center), 
+                                Paragraph(item.get('natureza_despesa', ''), style_center), 
+                                Paragraph(item.get('status_calculado', ''), style_center), 
+                                Paragraph(self.formatar_moeda(item.get('valor_inicial')), style_right), 
+                                Paragraph(self.formatar_moeda(item.get('saldo_disponivel')), style_right), 
+                                Paragraph(prazo_emp, style_center), 
+                                Paragraph(item.get('ug_gestora', ''), style_center), 
+                                Paragraph(data_rec, style_center), 
+                                Paragraph(item.get('observacao', ''), style_normal) 
+                            ]
+                            pdf_data.append(row) 
+                            
+                        col_widths = [1.2*inch, 0.7*inch, 0.7*inch, 0.7*inch, 1.0*inch, 1.0*inch, 0.8*inch, 0.7*inch, 0.8*inch, 2.4*inch]
+                        
+                        table = Table(pdf_data, repeatRows=1, colWidths=col_widths) 
+                        style = TableStyle([ 
+                            ('BACKGROUND', (0, 0), (-1, 0), colors.grey), 
+                            ('VALIGN', (0, 0), (-1, -1), 'TOP'), 
+                            ('GRID', (0, 0), (-1, -1), 1, colors.black), 
+                            ('BACKGROUND', (0, 1), (-1, -1), colors.beige), 
+                        ])
+                        table.setStyle(style); story.append(table)
+                        doc.build(story)
+                        self.show_success_snackbar(f"Relatório PDF Geral salvo!")
 
-                # --- EXCEL EXTRATO ---
-                elif self.tipo_ficheiro_a_salvar == "excel_extrato":
-                    dfs: dict = self.dados_relatorio_para_salvar
-                    with pd.ExcelWriter(caminho_salvar, engine='openpyxl') as writer:
-                         if 'Valor Empenhado' in dfs["nes"].columns: dfs["nes"]['Valor Empenhado'] = pd.to_numeric(dfs["nes"]['Valor Empenhado'], errors='coerce')
-                         if 'Valor Recolhido' in dfs["recolhimentos"].columns: dfs["recolhimentos"]['Valor Recolhido'] = pd.to_numeric(dfs["recolhimentos"]['Valor Recolhido'], errors='coerce')
-                         
-                         dfs["nc"].to_excel(writer, sheet_name='Dados da NC', index=False)
-                         dfs["nes"].to_excel(writer, sheet_name='Notas de Empenho', index=False)
-                         dfs["recolhimentos"].to_excel(writer, sheet_name='Recolhimentos', index=False)
-                    self.show_success_snackbar(f"Extrato Excel salvo!")
-                    
-                # --- PDF EXTRATO (LOTE 3, Item 6 - Corrigido) ---
-                elif self.tipo_ficheiro_a_salvar == "pdf_extrato":
-                    doc = SimpleDocTemplate(caminho_salvar, pagesize=letter); story = []; 
-                    dados_extrato: dict = self.dados_relatorio_para_salvar
-                    nc = dados_extrato['nc']
-                    
-                    story.append(Paragraph(f"Extrato da Nota de Crédito: {nc.get('numero_nc', '')}", style_title)); story.append(Spacer(1, 0.1*inch))
-                    story.append(Paragraph(f"PI: {nc.get('pi', '')} | ND: {nc.get('natureza_despesa', '')}", styles['Normal']))
-                    story.append(Paragraph(f"Valor Inicial: {self.formatar_moeda(nc.get('valor_inicial'))} | Prazo Empenho: {datetime.fromisoformat(nc.get('data_validade_empenho', '')).strftime('%d/%m/%Y') if nc.get('data_validade_empenho') else ''}", styles['Normal']))
-                    story.append(Paragraph(f"Data Recebimento: {datetime.fromisoformat(nc.get('data_recebimento', '')).strftime('%d/%m/%Y') if nc.get('data_recebimento') else ''} | UG Gestora: {nc.get('ug_gestora', '')}", styles['Normal']))
-                    story.append(Paragraph("Observação:", style_heading2))
-                    story.append(Paragraph(nc.get('observacao', 'N/A'), styles['Normal']))
-                    story.append(Spacer(1, 0.2*inch))
+                    # --- EXCEL EXTRATO ---
+                    elif self.tipo_ficheiro_a_salvar == "excel_extrato":
+                        dfs: dict = self.dados_relatorio_para_salvar
+                        with pd.ExcelWriter(caminho_salvar, engine='openpyxl') as writer:
+                             if 'Valor Empenhado' in dfs["nes"].columns: dfs["nes"]['Valor Empenhado'] = pd.to_numeric(dfs["nes"]['Valor Empenhado'], errors='coerce')
+                             if 'Valor Recolhido' in dfs["recolhimentos"].columns: dfs["recolhimentos"]['Valor Recolhido'] = pd.to_numeric(dfs["recolhimentos"]['Valor Recolhido'], errors='coerce')
+                             
+                             dfs["nc"].to_excel(writer, sheet_name='Dados da NC', index=False)
+                             dfs["nes"].to_excel(writer, sheet_name='Notas de Empenho', index=False)
+                             dfs["recolhimentos"].to_excel(writer, sheet_name='Recolhimentos', index=False)
+                        self.show_success_snackbar(f"Extrato Excel salvo!")
+                        
+                    # --- PDF EXTRATO (LOTE 3, Item 6 - Corrigido) ---
+                    elif self.tipo_ficheiro_a_salvar == "pdf_extrato":
+                        doc = SimpleDocTemplate(caminho_salvar, pagesize=letter); story = []; 
+                        dados_extrato: dict = self.dados_relatorio_para_salvar
+                        nc = dados_extrato['nc']
+                        
+                        story.append(Paragraph(f"Extrato da Nota de Crédito: {nc.get('numero_nc', '')}", style_title)); story.append(Spacer(1, 0.1*inch))
+                        story.append(Paragraph(f"PI: {nc.get('pi', '')} | ND: {nc.get('natureza_despesa', '')}", styles['Normal']))
+                        story.append(Paragraph(f"Valor Inicial: {self.formatar_moeda(nc.get('valor_inicial'))} | Prazo Empenho: {datetime.fromisoformat(nc.get('data_validade_empenho', '')).strftime('%d/%m/%Y') if nc.get('data_validade_empenho') else ''}", styles['Normal']))
+                        story.append(Paragraph(f"Data Recebimento: {datetime.fromisoformat(nc.get('data_recebimento', '')).strftime('%d/%m/%Y') if nc.get('data_recebimento') else ''} | UG Gestora: {nc.get('ug_gestora', '')}", styles['Normal']))
+                        story.append(Paragraph("Observação:", style_heading2))
+                        story.append(Paragraph(nc.get('observacao', 'N/A'), styles['Normal']))
+                        story.append(Spacer(1, 0.2*inch))
 
-                    story.append(Paragraph("Notas de Empenho Vinculadas", style_heading2))
-                    header_nes = [Paragraph(h, style_header) for h in ['Número NE', 'Data', 'Valor', 'Descrição']]
-                    pdf_data_nes = [header_nes]
-                    for ne in dados_extrato['nes']:
-                        data = datetime.fromisoformat(ne.get('data_empenho', '')).strftime('%d/%m/%Y') if ne.get('data_empenho') else ''
-                        row = [
-                            Paragraph(ne.get('numero_ne', ''), style_center), 
-                            Paragraph(data, style_center), 
-                            Paragraph(self.formatar_moeda(ne.get('valor_empenhado')), style_right), 
-                            Paragraph(ne.get('descricao', ''), style_normal) # <-- (Item 6) Quebra de linha
-                        ]
-                        pdf_data_nes.append(row)
-                    if not dados_extrato['nes']: pdf_data_nes.append([Paragraph("Nenhum empenho registado.", style_normal), "", "", ""])
-                    
-                    table_nes = Table(pdf_data_nes, repeatRows=1, colWidths=[1.5*inch, 0.8*inch, 1.2*inch, 4*inch])
-                    style_nes = TableStyle([('BACKGROUND', (0, 0), (-1, 0), colors.darkblue), ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke), ('VALIGN', (0, 0), (-1, -1), 'TOP'), ('GRID', (0, 0), (-1, -1), 1, colors.black), ('BACKGROUND', (0, 1), (-1, -1), colors.lightblue),])
-                    table_nes.setStyle(style_nes); story.append(table_nes); story.append(Spacer(1, 0.2*inch))
-                    
-                    story.append(Paragraph("Recolhimentos de Saldo Vinculados", style_heading2))
-                    header_rec = [Paragraph(h, style_header) for h in ['Data', 'Valor Recolhido', 'Descrição']]
-                    pdf_data_rec = [header_rec]
-                    for rec in dados_extrato['recolhimentos']:
-                         data = datetime.fromisoformat(rec.get('data_recolhimento', '')).strftime('%d/%m/%Y') if rec.get('data_recolhimento') else ''
-                         row = [
-                            Paragraph(data, style_center), 
-                            Paragraph(self.formatar_moeda(rec.get('valor_recolhido')), style_right), 
-                            Paragraph(rec.get('descricao', ''), style_normal) # <-- (Item 6) Quebra de linha
-                         ]
-                         pdf_data_rec.append(row)
-                    if not dados_extrato['recolhimentos']: pdf_data_rec.append([Paragraph("Nenhum recolhimento registado.", style_normal), "", ""])
-                    
-                    table_rec = Table(pdf_data_rec, repeatRows=1, colWidths=[1*inch, 1.5*inch, 5*inch])
-                    style_rec = TableStyle([('BACKGROUND', (0, 0), (-1, 0), colors.darkorange), ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke), ('VALIGN', (0, 0), (-1, -1), 'TOP'), ('GRID', (0, 0), (-1, -1), 1, colors.black), ('BACKGROUND', (0, 1), (-1, -1), colors.lightyellow),])
-                    table_rec.setStyle(style_rec); story.append(table_rec)
+                        story.append(Paragraph("Notas de Empenho Vinculadas", style_heading2))
+                        header_nes = [Paragraph(h, style_header) for h in ['Número NE', 'Data', 'Valor', 'Descrição']]
+                        pdf_data_nes = [header_nes]
+                        for ne in dados_extrato['nes']:
+                            data = datetime.fromisoformat(ne.get('data_empenho', '')).strftime('%d/%m/%Y') if ne.get('data_empenho') else ''
+                            row = [
+                                Paragraph(ne.get('numero_ne', ''), style_center), 
+                                Paragraph(data, style_center), 
+                                Paragraph(self.formatar_moeda(ne.get('valor_empenhado')), style_right), 
+                                Paragraph(ne.get('descricao', ''), style_normal) 
+                            ]
+                            pdf_data_nes.append(row)
+                        if not dados_extrato['nes']: pdf_data_nes.append([Paragraph("Nenhum empenho registado.", style_normal), "", "", ""])
+                        
+                        table_nes = Table(pdf_data_nes, repeatRows=1, colWidths=[1.5*inch, 0.8*inch, 1.2*inch, 4*inch])
+                        style_nes = TableStyle([('BACKGROUND', (0, 0), (-1, 0), colors.darkblue), ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke), ('VALIGN', (0, 0), (-1, -1), 'TOP'), ('GRID', (0, 0), (-1, -1), 1, colors.black), ('BACKGROUND', (0, 1), (-1, -1), colors.lightblue),])
+                        table_nes.setStyle(style_nes); story.append(table_nes); story.append(Spacer(1, 0.2*inch))
+                        
+                        story.append(Paragraph("Recolhimentos de Saldo Vinculados", style_heading2))
+                        header_rec = [Paragraph(h, style_header) for h in ['Data', 'Valor Recolhido', 'Descrição']]
+                        pdf_data_rec = [header_rec]
+                        for rec in dados_extrato['recolhimentos']:
+                             data = datetime.fromisoformat(rec.get('data_recolhimento', '')).strftime('%d/%m/%Y') if rec.get('data_recolhimento') else ''
+                             row = [
+                                Paragraph(data, style_center), 
+                                Paragraph(self.formatar_moeda(rec.get('valor_recolhido')), style_right), 
+                                Paragraph(rec.get('descricao', ''), style_normal) 
+                             ]
+                             pdf_data_rec.append(row)
+                        if not dados_extrato['recolhimentos']: pdf_data_rec.append([Paragraph("Nenhum recolhimento registado.", style_normal), "", ""])
+                        
+                        table_rec = Table(pdf_data_rec, repeatRows=1, colWidths=[1*inch, 1.5*inch, 5*inch])
+                        style_rec = TableStyle([('BACKGROUND', (0, 0), (-1, 0), colors.darkorange), ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke), ('VALIGN', (0, 0), (-1, -1), 'TOP'), ('GRID', (0, 0), (-1, -1), 1, colors.black), ('BACKGROUND', (0, 1), (-1, -1), colors.lightyellow),])
+                        table_rec.setStyle(style_rec); story.append(table_rec)
 
-                    doc.build(story)
-                    self.show_success_snackbar(f"Extrato PDF salvo!")
+                        doc.build(story)
+                        self.show_success_snackbar(f"Extrato PDF salvo!")
 
-            except Exception as ex_save: 
-                print(f"Erro ao salvar ({self.tipo_ficheiro_a_salvar}): {ex_save}")
-                self.show_error(f"Erro ao salvar: {ex_save}")
-            finally: 
-                self.dados_relatorio_para_salvar = None
-                self.tipo_ficheiro_a_salvar = None
-                self.id_nc_extrato_selecionada = None
-                self.progress_ring.visible = False
-                self.page.update()
-        else:
-            print("Salvar cancelado/dados em falta.")
+                except Exception as ex_save: 
+                    print(f"Erro ao salvar ({self.tipo_ficheiro_a_salvar}): {ex_save}")
+                    self.show_error(f"Erro ao salvar: {ex_save}")
+                    
+            else:
+                print("Salvar cancelado/dados em falta.")
+        
+        finally: 
             self.dados_relatorio_para_salvar = None
             self.tipo_ficheiro_a_salvar = None
             self.id_nc_extrato_selecionada = None
             self.progress_ring.visible = False
-            self.update()
+            self.page.update()
             
 # --- FUNÇÃO QUE FALTAVA ---
 def create_relatorios_view(page: ft.Page, error_modal=None):
