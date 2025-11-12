@@ -1,14 +1,14 @@
 # main.py
-# (Versão Lote 5.2 - Adiciona Traceback de Erro no Login)
+# (Versão Lote 6 - Pronto para Web)
 
 import flet as ft
+import os # <-- (NOVO) Necessário para a porta do servidor
+import traceback # <-- (Mantido) Para debug de login
+
 # Importa AMBOS os clientes
 from supabase_client import supabase, supabase_admin 
 # Importação correta da biblioteca de auth
 from supabase_auth.errors import AuthApiError 
-
-# (NOVO) - Importa traceback
-import traceback
 
 # Importa as nossas "views" (abas)
 from views.dashboard_view import create_dashboard_view
@@ -27,10 +27,8 @@ class ErrorModal:
         self.page = page
         self.dialog = ft.AlertDialog(
             modal=True,
-            # (LOTE 3.2) - CORREÇÃO FINAL DO BUG 'ft.icons'
-            # O ícone é apenas uma string, sem 'ft.icons'
             title=ft.Row([
-                ft.Icon(name="ERROR_OUTLINE", color="red"), # Correto: name="NOME_ICONE"
+                ft.Icon(name="ERROR_OUTLINE", color="red"), 
                 ft.Text("Ocorreu um Erro")
             ]),
             content=ft.Text("Mensagem de erro padrão."),
@@ -39,7 +37,6 @@ class ErrorModal:
             ],
             actions_alignment=ft.MainAxisAlignment.END
         )
-        # Adiciona o diálogo ao overlay da página (invisível)
         if self.dialog not in self.page.overlay:
              self.page.overlay.append(self.dialog)
 
@@ -71,7 +68,6 @@ def main(page: ft.Page):
         )
     )
     
-    # (LOTE 3, Item 11) - Instancia o modal de erro global
     error_modal_global = ErrorModal(page)
 
     # --- Campos de Login (Plano B) ---
@@ -91,8 +87,6 @@ def main(page: ft.Page):
         can_reveal_password=True,
         on_submit=lambda e: handle_login(e) 
     )
-
-    # (LOTE 3) - Função show_snackbar removida
 
     def show_main_layout(e=None):
         """ 
@@ -116,22 +110,17 @@ def main(page: ft.Page):
             ]
         )
 
-        # --- (LOTE 3) Carregar o conteúdo de cada aba ---
-        # 1. Criamos o Dashboard e as NCs primeiro
         view_dashboard = create_dashboard_view(page, error_modal=error_modal_global)
         view_ncs = create_ncs_view(page, error_modal=error_modal_global)
         
-        # 2. (LOTE 2.1) Criamos o "Callback Mestre"
         def on_data_changed_master(e):
             print("Callback Mestre: Recarregando Dashboard e NCs...")
             if view_dashboard: view_dashboard.load_dashboard_data(None)
             if view_ncs: view_ncs.load_ncs_data()
         
-        # 3. (LOTE 3) Passamos o callback mestre E o error_modal
         view_ncs.on_data_changed_callback = on_data_changed_master
         view_nes = create_nes_view(page, on_data_changed=on_data_changed_master, error_modal=error_modal_global)
         view_relatorios = create_relatorios_view(page, error_modal=error_modal_global)
-        # --- (FIM LOTE 3) ---
         
         abas_principais = ft.Tabs(
             selected_index=0,
@@ -161,7 +150,6 @@ def main(page: ft.Page):
             ]
         )
         
-        # (LOTE 3) - Passa o modal de erro também para a view de Admin
         if page.session.get("user_funcao") == "admin":
             view_admin = create_admin_view(page, error_modal=error_modal_global)
             abas_principais.tabs.append(
@@ -181,7 +169,6 @@ def main(page: ft.Page):
         password = password_field.value
 
         if not username or not password:
-            # (LOTE 3) - Usa o novo modal
             error_modal_global.show("Preencha o utilizador e a senha.")
             return
             
@@ -220,7 +207,6 @@ def main(page: ft.Page):
                     supabase.auth.sign_out()
                     username_field.disabled = False
                     password_field.disabled = False
-                    # (LOTE 3) - Usa o novo modal
                     error_modal_global.show("Erro: O seu utilizador autenticou, mas não tem um perfil (função) definido.")
                     return
 
@@ -233,7 +219,6 @@ def main(page: ft.Page):
                 supabase.auth.sign_out() 
                 username_field.disabled = False
                 password_field.disabled = False
-                # (LOTE 3) - Usa o novo modal
                 error_modal_global.show(f"Erro ao carregar perfil de utilizador: {ex_perfil}")
                 return
 
@@ -243,25 +228,17 @@ def main(page: ft.Page):
             print(f"Erro de Login: {ex.message}")
             username_field.disabled = False
             password_field.disabled = False
-            # (LOTE 3) - Usa o novo modal
             error_modal_global.show(f"Utilizador ou senha inválidos.")
         except Exception as ex:
-            # --- (LOTE 5.2) MUDANÇA IMPORTANTE ---
-            # Se o show_main_layout() falhar (ex: crash do AdminView),
-            # este 'except' vai apanhar.
-            # Vamos imprimir o traceback completo.
+            # (LOTE 5.2) Adiciona traceback para apanhar erros de "crash"
             print("--- ERRO CRÍTICO INESPERADO (TRACEBACK) ---")
-            traceback.print_exc() # <-- NOVO
+            traceback.print_exc()
             print("---------------------------------------------")
-            # --- FIM DA MUDANÇA ---
             
             username_field.disabled = False
             password_field.disabled = False
-            # (LOTE 3) - Usa o novo modal
             error_modal_global.show(f"Ocorreu um erro inesperado: {ex}")
             
-    # --- FUNÇÃO handle_register() REMOVIDA ---
-
     def handle_logout(e):
         """Limpa a sessão e volta para a tela de login."""
         try:
@@ -310,13 +287,20 @@ def main(page: ft.Page):
         )
 
     # --- Estado Inicial (DEV MODE DESATIVADO) ---
-    # Mostra a tela de login primeiro
     page.add(build_login_view()) 
 
-# --- Executar a Aplicação ---
+# --- (MODIFICADO LOTE 6) Executar a Aplicação (Modo Web) ---
 if __name__ == "__main__":
+    
+    # Define a porta. O Render espera a porta 10000.
+    # Para testes locais, usa 8550 se a porta do Render não estiver definida.
+    port = int(os.environ.get("PORT", 8550))
+    
+    print(f"A iniciar aplicação web na porta: {port}")
+    
     ft.app(
         target=main, 
-        view=ft.AppView.FLET_APP, 
-        assets_dir="assets" 
+        view=ft.AppView.WEB_BROWSER, # <-- MUITO IMPORTANTE
+        assets_dir="assets",
+        port=port
     )
