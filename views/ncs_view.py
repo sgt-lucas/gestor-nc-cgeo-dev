@@ -1,5 +1,5 @@
 # views/ncs_view.py
-# (Versão 17.10 - Lote 8.4: Corrige AttributeError FilePickerResultEvent)
+# (Versão 17.8 - Lote 8.3: Adiciona Scroll Global)
 
 import flet as ft
 from supabase_client import supabase # Cliente 'anon'
@@ -14,8 +14,9 @@ import re
 class NcsView(ft.Column):
     """
     Representa o conteúdo da aba Notas de Crédito (CRUD).
-    Versão 17.10 (Lote 8.4):
-    - (BUGFIX) Corrige "AttributeError: 'flet' has no attribute 'FilePickerResultEvent'".
+    Versão 17.8 (Lote 8.3):
+    - (BUGFIX) Adiciona 'self.scroll = ft.ScrollMode.ADAPTIVE' para 
+      permitir que a aba inteira role em telas pequenas.
     - (Ponto 5) Adiciona Dropdown de 'Seção' ao modal e tabela.
     - (Ponto 3 & 4) Adiciona 'Valor Inicial' e '% Empenhado'.
     """
@@ -34,16 +35,15 @@ class NcsView(ft.Column):
         self.spacing = 20
         self.padding = 20
         
-        self.scroll = ft.ScrollMode.ADAPTIVE
+        # --- (CORREÇÃO LOTE 8.3) ---
+        self.scroll = ft.ScrollMode.ADAPTIVE # <-- ADICIONADO
+        # --- FIM DA CORREÇÃO ---
         
         self.progress_ring = ft.ProgressRing(visible=True, width=32, height=32)
         
-        # --- (CORREÇÃO LOTE 8.4) ---
-        # Removida a pista de tipo de FilePickerResultEvent do on_result (para evitar o crash)
         self.file_picker_import = ft.FilePicker(
-            on_result=self.on_file_picker_result 
+            on_result=self.on_file_picker_result
         )
-        # --- FIM DA CORREÇÃO ---
         
         # --- TABELA (Ponto 5) ---
         self.tabela_ncs = ft.DataTable(
@@ -263,8 +263,7 @@ class NcsView(ft.Column):
             ft.Row([ self.filtro_pesquisa_nc, self.filtro_status, self.btn_limpar_filtros ]),
             ft.Row([ self.filtro_pi, self.filtro_nd ]),
             ft.Divider(),
-            # (CORREÇÃO LOTE 8.3) - Removido 'expand=True'
-            ft.Container( content=self.tabela_ncs, )
+            ft.Container( content=self.tabela_ncs, expand=True )
         ]
 
         self.page.overlay.append(self.modal_form)
@@ -502,7 +501,7 @@ class NcsView(ft.Column):
                     data_val = datetime.fromisoformat(nc['data_validade_empenho']).strftime('%d/%m/%Y')
                     
                     obs_texto = nc.get('observacao', '')
-                    obs_curta = (obs_texto[:30] + '...') if len(obs_texto) > 30 else obs_curta
+                    obs_curta = (obs_texto[:30] + '...') if len(obs_texto) > 30 else obs_texto
                     
                     # (Ponto 4) Cálculo da Percentagem
                     valor_ini = float(nc.get('valor_inicial', 0))
@@ -549,7 +548,7 @@ class NcsView(ft.Column):
                         ft.DataCell(ft.Text("")), ft.DataCell(ft.Text("")),
                         ft.DataCell(ft.Text("")), ft.DataCell(ft.Text("")),
                         ft.DataCell(ft.Text("")), ft.DataCell(ft.Text("")),
-                        ft.DataCell(ft.Text("")), 
+                        ft.DataCell(ft.Text("")), # (Ponto 5)
                     ])
                 )
             print("NCs: Dados carregados com sucesso.")
@@ -657,7 +656,6 @@ class NcsView(ft.Column):
             
             if not self.modal_txt_numero_nc.value or len(self.modal_txt_numero_nc.value) != 6:
                 self.modal_txt_numero_nc.error_text = "Deve ter 6 dígitos"
-                    
                 has_error = True
 
             if has_error:
@@ -847,7 +845,6 @@ class NcsView(ft.Column):
             self.show_success_snackbar("Recolhimento de saldo registado com sucesso!")
             
             self.close_recolhimento_modal(None)
-            self.load_secoes_cache() # Recarrega o cache (embora não seja essencial, é seguro)
             self.load_ncs_data() 
             if self.on_data_changed_callback:
                 self.on_data_changed_callback(None) 
@@ -893,7 +890,7 @@ class NcsView(ft.Column):
             self.show_success_snackbar("Nota de Crédito excluída com sucesso.")
             
             self.close_confirm_delete_nc(None)
-            self.load_secoes_cache() 
+            self.load_secoes_cache() # (Ponto 5) Recarrega o cache
             self.load_filter_options() 
             self.load_ncs_data() 
             if self.on_data_changed_callback:
@@ -906,7 +903,7 @@ class NcsView(ft.Column):
             
     # --- FUNÇÕES DE IMPORTAÇÃO DE PDF (V14 - Adiciona Observação) ---
 
-    def on_file_picker_result(self, e): # <-- Removido o type hint 'ft.FilePickerResultEvent'
+    def on_file_picker_result(self, e: ft.FilePickerResultEvent):
         if e.files:
             file_path = e.files[0].path
             print(f"A processar ficheiro PDF: {file_path}")
@@ -997,7 +994,7 @@ class NcsView(ft.Column):
                 dados_nc['data_validade'] = dados_nc['data_recebimento']
                 print("Campo <Prazo Empenho> encontrado: empenho imediato")
             else:
-                prazo_str = extrair(r'EMPH ATÉ\s*([\d\w\.]+)', texto_completo, "Prazo Empenho")
+                prazo_str = extrair(r'EMPH ATÉ\s*([\d\w\.]+)', obs_texto_completo, "Prazo Empenho")
                 if prazo_str:
                     dados_nc['data_validade'] = formatar_data(prazo_str, ano_base_str=dados_nc['data_recebimento'])
         else:

@@ -1,26 +1,18 @@
 # views/dashboard_view.py
-# (Versão 5.10 - Lote 8.4: Implementação Final do Gráfico)
+# (Versão 5.7 - Lote 8.3: Adiciona Scroll Global)
 
 import flet as ft
 import traceback 
 from supabase_client import supabase # Cliente 'anon'
 from datetime import datetime, timedelta
 
-# (NOVO - Ponto 6) Importa a biblioteca de gráficos
-try:
-    import flet_charts as charts # Corrigido o nome do pacote de importação
-    FLET_CHARTS_AVAILABLE = True
-except ImportError:
-    print("AVISO: Biblioteca de gráficos 'flet_charts' não encontrada. Execute: pip install flet_charts")
-    FLET_CHARTS_AVAILABLE = False
-
-
 class DashboardView(ft.Column):
     """
     Representa o conteúdo da aba Dashboard.
-    Versão 5.10 (Lote 8.4):
-    - (Ponto 6) Adiciona gráfico de barras (BarChart) para Saldo por Seção.
-    - (BUGFIX) Adiciona 'self.scroll = ft.ScrollMode.ADAPTIVE'.
+    Versão 5.7 (Lote 8.3):
+    - (BUGFIX) Adiciona 'self.scroll = ft.ScrollMode.ADAPTIVE' para 
+      permitir que a aba inteira role em telas pequenas.
+    - (Ponto 3) Adiciona a coluna 'Valor Inicial' à tabela de NCs a vencer.
     """
     
     def __init__(self, page, error_modal=None):
@@ -31,7 +23,9 @@ class DashboardView(ft.Column):
         self.padding = 20
         self.error_modal = error_modal
         
-        self.scroll = ft.ScrollMode.ADAPTIVE
+        # --- (CORREÇÃO LOTE 8.3) ---
+        self.scroll = ft.ScrollMode.ADAPTIVE # <-- ADICIONADO
+        # --- FIM DA CORREÇÃO ---
         
         self.progress_ring = ft.ProgressRing(visible=True, width=32, height=32)
         self.txt_saldo_total = ft.Text("R$ 0,00", size=32, weight=ft.FontWeight.BOLD)
@@ -47,32 +41,10 @@ class DashboardView(ft.Column):
                 ft.DataColumn(ft.Text("Saldo Disponível", weight=ft.FontWeight.BOLD), numeric=True),
             ],
             rows=[], 
+            expand=True,
             border=ft.border.all(1, "grey200"),
             border_radius=8,
         )
-        
-        # --- (NOVO - Ponto 6) Gráfico ---
-        self.secao_chart = ft.Text("Carregando gráfico de seções...")
-        if FLET_CHARTS_AVAILABLE:
-            self.secao_chart = charts.BarChart(
-                bar_groups=[],
-                border=ft.border.all(1, "grey200"),
-                border_radius=8,
-                horizontal_grid_lines=charts.GridLines(
-                    interval=10000, 
-                    color="grey200",
-                    width=1
-                ),
-                tooltip=True,
-                height=300,
-            )
-        else:
-            self.secao_chart = ft.Text(
-                "Erro: Biblioteca 'flet_charts' não instalada.\n"
-                "Execute 'pip install flet_charts' no seu terminal.",
-                color=ft.colors.RED
-            )
-        # --- Fim (Ponto 6) ---
         
         # --- CONTROLOS DE FILTRO ---
         self.filtro_pi = ft.Dropdown(
@@ -105,7 +77,7 @@ class DashboardView(ft.Column):
             on_click=self.limpar_filtros
         )
 
-        # --- LAYOUT (Ponto 6) ---
+        # --- LAYOUT ---
         self.controls = [
             ft.Row(
                 [
@@ -139,20 +111,10 @@ class DashboardView(ft.Column):
 
             self.txt_saldo_total,
             ft.Divider(),
-            
-            # (Ponto 6) Título e Container do Gráfico
-            ft.Text("Saldo Disponível por Seção (NCs Ativas)", size=20, weight=ft.FontWeight.W_600),
-            ft.Container(
-                content=self.secao_chart,
-                padding=10,
-                border_radius=8,
-            ),
-            # --- Fim (Ponto 6) ---
-            
-            ft.Divider(),
             ft.Text("Notas de Crédito a Vencer (Próximos 7 dias)", size=20, weight=ft.FontWeight.W_600),
             ft.Container(
                 content=self.tabela_vencendo,
+                expand=True
             )
         ]
 
@@ -188,75 +150,6 @@ class DashboardView(ft.Column):
             return f"R$ {val:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
         except (ValueError, TypeError):
             return "R$ 0,00"
-
-    # --- (NOVO - Ponto 6) Função de Carregar Gráfico ---
-    def load_chart_data(self):
-        """Busca os dados de saldo por seção e constrói o gráfico."""
-        if not FLET_CHARTS_AVAILABLE or not isinstance(self.secao_chart, charts.BarChart):
-            return # Não faz nada se a biblioteca estiver em falta
-
-        try:
-            print("Dashboard: A carregar dados do gráfico de seções...")
-            # 1. Chama a nova função RPC 'get_saldo_por_secao'
-            resp = supabase.rpc('get_saldo_por_secao').execute()
-            
-            if not resp.data:
-                print("Dashboard: Gráfico - Nenhum dado de seção encontrado.")
-                self.secao_chart.bar_groups = []
-                self.secao_chart.update()
-                return
-
-            print("Dashboard: Dados do gráfico carregados.")
-            
-            bar_groups = []
-            max_y = 0 
-            
-            # 2. Constrói as barras
-            for i, item in enumerate(resp.data):
-                secao_nome = item['secao_nome']
-                saldo_total = float(item['saldo_total'])
-                
-                if saldo_total > max_y:
-                    max_y = saldo_total
-                
-                bar_groups.append(
-                    charts.BarGroup(
-                        x=i,
-                        bar_rods=[
-                            charts.BarRod(
-                                from_y=0,
-                                to_y=saldo_total,
-                                width=25,
-                                color=ft.colors.GREEN_600,
-                                tooltip=f"{secao_nome}\n{self.formatar_moeda(saldo_total)}",
-                                border_radius=0,
-                            )
-                        ]
-                    )
-                )
-
-            # 3. Atualiza o gráfico
-            self.secao_chart.bar_groups = bar_groups
-            
-            # Define o eixo Y para ser um pouco maior que o valor máximo
-            self.secao_chart.max_y = (max_y * 1.1) 
-            
-            # Define os títulos do eixo X (os nomes das seções)
-            self.secao_chart.bottom_axis = charts.Axis(
-                labels=[
-                    charts.AxisLabel(value=i, label=item['secao_nome'][:10]) 
-                    for i, item in enumerate(resp.data)
-                ]
-            )
-            
-            self.secao_chart.update()
-            print("Dashboard: Gráfico de seções atualizado.")
-
-        except Exception as ex:
-            print("--- ERRO CRÍTICO (TRACEBACK) NO DASHBOARD [load_chart_data] ---")
-            traceback.print_exc()
-            self.handle_db_error(ex, "carregar gráfico de seções")
-    # --- Fim (Ponto 6) ---
 
     def load_filter_options(self, pi_selecionado=None):
         """
@@ -342,6 +235,7 @@ class DashboardView(ft.Column):
             
             saldo_total = 0.0
             if resposta_saldo.data:
+                # (Correção Lote 7)
                 saldo_total = sum(float(item['saldo_disponivel']) for item in resposta_saldo.data)
             
             self.txt_saldo_total.value = self.formatar_moeda(saldo_total)
@@ -350,6 +244,7 @@ class DashboardView(ft.Column):
             hoje = datetime.now().date()
             em_7_dias = hoje + timedelta(days=7)
             
+            # (MODIFICADO - Ponto 3) Adicionado 'valor_inicial'
             resposta_vencendo = supabase.table('ncs_com_saldos') \
                                         .select('numero_nc, data_validade_empenho, saldo_disponivel, pi, natureza_despesa, valor_inicial') \
                                         .filter('status_calculado', 'eq', 'Ativa') \
@@ -371,6 +266,7 @@ class DashboardView(ft.Column):
                                 ft.DataCell(ft.Text(data_formatada)),
                                 ft.DataCell(ft.Text(nc['pi'])),
                                 ft.DataCell(ft.Text(nc['natureza_despesa'])),
+                                # (NOVO - Ponto 3)
                                 ft.DataCell(ft.Text(self.formatar_moeda(nc['valor_inicial']))),
                                 ft.DataCell(ft.Text(self.formatar_moeda(saldo_nc))),
                             ]
@@ -382,14 +278,11 @@ class DashboardView(ft.Column):
                         ft.DataCell(ft.Text("Nenhuma NC a vencer nos próximos 7 dias.", italic=True)),
                         ft.DataCell(ft.Text("")), ft.DataCell(ft.Text("")),
                         ft.DataCell(ft.Text("")), ft.DataCell(ft.Text("")),
-                        ft.DataCell(ft.Text("")), 
+                        ft.DataCell(ft.Text("")), # (NOVO - Ponto 3) Célula vazia para alinhar
                     ])
                 )
 
             print("Dashboard: Dados carregados com sucesso.")
-            
-            # --- (NOVO - Ponto 6) ---
-            self.load_chart_data()
 
         except Exception as ex:
             print("--- ERRO CRÍTICO (TRACEBACK) NO DASHBOARD [load_dashboard_data] ---")

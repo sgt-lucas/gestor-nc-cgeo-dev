@@ -1,5 +1,5 @@
 # views/admin_view.py
-# (Versão 9.7 - Lote 8.4: Corrige Scroll Global do Admin)
+# (Versão 9.6 - Lote 8.3: Corrige TypeError 'scroll' em ListView)
 
 import flet as ft
 # Importamos AMBOS os clientes
@@ -10,11 +10,10 @@ import traceback
 class AdminView(ft.Column):
     """
     Representa o conteúdo da aba Administração.
-    Versão 9.7 (Lote 8.4):
-    - (BUGFIX) Adiciona 'self.scroll = ft.ScrollMode.ADAPTIVE' à classe principal.
-    - (BUGFIX) Remove 'expand=True' dos containers internos e da tabela
-      para permitir que o scroll global da aba funcione.
-    - (BUGFIX) Substitui o Row(expand=True) por um ResponsiveRow.
+    Versão 9.6 (Lote 8.3):
+    - (BUGFIX) Remove o parâmetro 'scroll' do ft.ListView,
+      que causava o 'TypeError'. A propriedade 'expand=True'
+      já ativa a rolagem interna.
     """
     
     def __init__(self, page, error_modal=None):
@@ -25,13 +24,9 @@ class AdminView(ft.Column):
         self.padding = 20
         self.error_modal = error_modal
         
-        # --- (CORREÇÃO LOTE 8.4) ---
-        self.scroll = ft.ScrollMode.ADAPTIVE # <-- ADICIONADO
-        # --- FIM DA CORREÇÃO ---
-        
         self.progress_ring_users = ft.ProgressRing(visible=True, width=32, height=32)
         
-        # (Ponto 5) Controlos para Seções
+        # (NOVO - Ponto 5) Controlos para Seções
         self.progress_ring_secoes = ft.ProgressRing(visible=True, width=32, height=32)
         self.txt_nova_secao = ft.TextField(label="Nome da Nova Seção", expand=True)
         
@@ -41,11 +36,13 @@ class AdminView(ft.Column):
             tooltip="Adicionar Seção"
         )
         
-        # (Lote 8.3) - Corrigido, 'expand' é necessário para a rolagem INTERNA da lista
+        # --- (CORREÇÃO LOTE 8.3) ---
+        # Removida a propriedade 'scroll' que causava o TypeError
         self.lista_secoes_view = ft.ListView(
             expand=True, 
             spacing=10
         )
+        # --- FIM DA CORREÇÃO ---
         
         self.tabela_users = ft.DataTable(
             columns=[
@@ -55,7 +52,7 @@ class AdminView(ft.Column):
                 ft.DataColumn(ft.Text("Ações", weight=ft.FontWeight.BOLD)),
             ],
             rows=[],
-            # (CORREÇÃO LOTE 8.4) - 'expand' removido
+            expand=True,
             border=ft.border.all(1, "grey200"),
             border_radius=8,
         )
@@ -109,7 +106,7 @@ class AdminView(ft.Column):
         )
         # --- Fim do Modal ---
         
-        # --- (Ponto 5) Layout da Página ---
+        # --- (NOVO - Ponto 5) Layout da Página ---
         self.layout_gestao_users = ft.Container(
             content=ft.Column(
                 [
@@ -129,13 +126,12 @@ class AdminView(ft.Column):
                         on_click=self.open_add_modal 
                     ),
                     ft.Divider(),
-                    # (CORREÇÃO LOTE 8.4) - 'expand' removido
                     ft.Container(
                         content=self.tabela_users,
-                        # expand=True <-- REMOVIDO
+                        expand=True
                     )
                 ],
-                # (CORREÇÃO LOTE 8.4) - 'expand' removido
+                expand=True
             ),
             padding=20,
             border=ft.border.all(1, "grey200"),
@@ -162,30 +158,23 @@ class AdminView(ft.Column):
                         ]
                     ),
                     ft.Divider(),
-                    # (CORREÇÃO LOTE 8.4) 
-                    # O expand=True aqui (no ListView) está correto, 
-                    # mas precisamos de um 'height' no container-pai 
-                    # para que ele saiba rolar internamente.
-                    ft.Container(
-                        content=self.lista_secoes_view, 
-                        height=400 # Altura fixa para a lista de seções
-                    )
+                    self.lista_secoes_view,
                 ],
-                # (CORREÇÃO LOTE 8.4) - 'expand' removido
+                expand=True
             ),
             padding=20,
             border=ft.border.all(1, "grey200"),
             border_radius=8
         )
 
-        # (CORREÇÃO LOTE 8.4) - Substituído Row(expand=True) por ResponsiveRow
         self.controls = [
-            ft.ResponsiveRow(
+            ft.Row(
                 [
-                    # Layout dividido 60/40 (em telas 'large') e 100% (em telas 'small')
-                    ft.Column(col={"sm": 12, "lg": 7}, controls=[self.layout_gestao_users]),
-                    ft.Column(col={"sm": 12, "lg": 5}, controls=[self.layout_gestao_secoes]),
-                ]
+                    # Layout dividido em 60% (Users) e 40% (Seções)
+                    ft.Column([self.layout_gestao_users], expand=6),
+                    ft.Column([self.layout_gestao_secoes], expand=4),
+                ],
+                expand=True
             )
         ]
         # --- Fim (Ponto 5) ---

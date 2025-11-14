@@ -1,5 +1,5 @@
 # views/relatorios_view.py
-# (Versão 4.4 - Lote 8.4: Corrige AttributeError FilePickerResultEvent)
+# (Versão 4.3 - Lote 8.3: Adiciona Scroll Global e corrige 'AssertionError')
 
 import flet as ft
 from supabase_client import supabase # Cliente 'anon'
@@ -18,9 +18,13 @@ from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_LEFT # (LOTE 3)
 class RelatoriosView(ft.Column):
     """
     Representa o conteúdo da aba Relatórios.
-    Versão 4.4 (Lote 8.4):
-    - (BUGFIX) Corrige "AttributeError: module 'flet' has no attribute 'FilePickerResultEvent'".
-    - (BUGFIX) Mantém as correções de Scroll e Loading.
+    Versão 4.3 (Lote 8.3):
+    - (BUGFIX) Adiciona 'self.scroll = ft.ScrollMode.ADAPTIVE' para 
+      permitir que a aba inteira role em telas pequenas.
+    - (BUGFIX) Move 'load_all_filters' do '__init__' para 'on_mount'
+      para corrigir o 'AssertionError'.
+    - (BUGFIX) Move 'progress_ring' para 'finally' para corrigir 
+      o "loading infinito".
     """
     
     def __init__(self, page, error_modal=None):
@@ -32,7 +36,7 @@ class RelatoriosView(ft.Column):
         self.error_modal = error_modal
         
         # --- (CORREÇÃO LOTE 8.3) ---
-        self.scroll = ft.ScrollMode.ADAPTIVE # <-- MANTIDO
+        self.scroll = ft.ScrollMode.ADAPTIVE # <-- ADICIONADO
         # --- FIM DA CORREÇÃO ---
         
         self.progress_ring = ft.ProgressRing(visible=False, width=32, height=32)
@@ -253,7 +257,7 @@ class RelatoriosView(ft.Column):
         self.load_filter_options(pi_selecionado=None) 
         self.page.update() if self.page else None
         
-    def fetch_report_data_geral(self, e): # <-- Adicionado 'e' para compatibilidade
+    def fetch_report_data_geral(self):
         """Busca os dados das NCs para o Relatório Geral, aplicando filtros."""
         print("Relatórios: A buscar dados para Relatório Geral...")
         self.progress_ring.visible = True; self.update()
@@ -342,15 +346,12 @@ class RelatoriosView(ft.Column):
             self.handle_db_error(ex, "carregar lista de NCs")
             
     # --- Funções de Geração e Salvamento (Lote 3) ---
-    
-    # --- (CORREÇÃO LOTE 8.3) ---
     def gerar_relatorio_geral_excel(self, e):
-    # --- FIM DA CORREÇÃO ---
         """Inicia a geração do relatório Excel GERAL."""
         self.progress_ring.visible = True
         self.update()
         
-        dados = self.fetch_report_data_geral(e)
+        dados = self.fetch_report_data_geral()
         if dados:
             try:
                 df = pd.DataFrame(dados)
@@ -376,7 +377,7 @@ class RelatoriosView(ft.Column):
         self.progress_ring.visible = True
         self.update()
         
-        dados = self.fetch_report_data_geral(e)
+        dados = self.fetch_report_data_geral()
         if dados:
             self.dados_relatorio_para_salvar = dados 
             self.tipo_ficheiro_a_salvar = "pdf_geral"
@@ -458,7 +459,7 @@ class RelatoriosView(ft.Column):
         # (BUGFIX LOTE 7)
         self.progress_ring.visible = False; self.update()
 
-    def handle_save_file_result(self, e): # <-- CORRIGIDO AQUI
+    def handle_save_file_result(self, e: ft.FilePickerResultEvent):
         """Chamado DEPOIS que o utilizador escolhe onde salvar."""
         
         self.progress_ring.visible = True
