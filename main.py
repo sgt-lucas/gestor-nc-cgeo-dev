@@ -1,9 +1,11 @@
 # main.py
 # (Versão Lote 6 - Pronto para Web)
+# (REVERTIDO: Removemos toda a lógica de passar 'pickers' como argumento)
 
 import flet as ft
-import os # <-- (NOVO) Necessário para a porta do servidor
-import traceback # <-- (Mantido) Para debug de login
+import os 
+import traceback 
+# import datetime # (Não é mais necessário aqui)
 
 # Importa AMBOS os clientes
 from supabase_client import supabase, supabase_admin 
@@ -120,6 +122,8 @@ def main(page: ft.Page):
         
         view_ncs.on_data_changed_callback = on_data_changed_master
         view_nes = create_nes_view(page, on_data_changed=on_data_changed_master, error_modal=error_modal_global)
+        
+        # --- (REVERTIDO) Chamada simples e original ---
         view_relatorios = create_relatorios_view(page, error_modal=error_modal_global)
         
         abas_principais = ft.Tabs(
