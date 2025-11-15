@@ -1,7 +1,7 @@
 # views/relatorios_view.py
-# (VERSÃO WEB - CORRIGIDA v7.4 - para Flet 0.28.3)
-# (Usa ft.ElevatedButton + page.launch_url(download=True)
-#  Esta versão VAI FUNCIONAR APÓS o 'pip install --upgrade')
+# (VERSÃO WEB - CORRIGIDA v8.0)
+# (Compatibilidade total com Flet antigo)
+# (Salva em 'assets/' e usa launch_url(url_relativa_sem_barra))
 
 import flet as ft
 from supabase_client import supabase # Cliente 'anon'
@@ -23,7 +23,7 @@ from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_LEFT
 class RelatoriosView(ft.Column):
     """
     Representa o conteúdo da aba Relatórios.
-    (Corrigido v7.4: Usa ft.ElevatedButton + launch_url(download=True))
+    (Corrigido v8.0: Usa launch_url(url_relativa) para servir de assets/)
     """
     
     def __init__(self, page, error_modal=None):
@@ -308,12 +308,12 @@ class RelatoriosView(ft.Column):
             self.handle_db_error(ex, "carregar lista de NCs")
             
     
-    # --- (LÓGICA DE DOWNLOAD v7.4 - QUE VAI FUNCIONAR APÓS O UPGRADE) ---
+    # --- (INÍCIO DA REESCRITA v8.0 - LÓGICA DE DOWNLOAD) ---
     
     def _executar_download(self, tipo_relatorio, nome_base, dados_para_gerar, button_control_to_update):
         """
         Função unificada para gerar, salvar em 'assets/' e exibir o botão de download.
-        (Usa 'download=True' - requer Flet 0.22.0+)
+        (Compatível com Flet antigo)
         """
         self.progress_ring.visible = True
         button_control_to_update.visible = False 
@@ -328,8 +328,6 @@ class RelatoriosView(ft.Column):
             extensao = "xlsx" if "excel" in tipo_relatorio else "pdf"
             nome_unico = f"{nome_base}_{uuid.uuid4()}.{extensao}"
             
-            # --- (CORREÇÃO v7.7) ---
-            # Salva na pasta 'assets' (que é pública), não em 'uploads'
             if not os.path.exists("assets"):
                 os.makedirs("assets")
             caminho_servidor = os.path.join("assets", nome_unico)
@@ -338,16 +336,15 @@ class RelatoriosView(ft.Column):
             with open(caminho_servidor, "wb") as f:
                 f.write(file_bytes)
                 
-            # A URL para um arquivo em 'assets/' é '/assets/nome_do_arquivo'
-            url_download = f"/assets/{nome_unico}"
-            # --- (FIM DA CORREÇÃO v7.7) ---
+            # --- (CORREÇÃO v8.0) ---
+            # A URL para um arquivo em 'assets/' NÃO deve ter a barra inicial.
+            url_download = nome_unico
+            # --- (FIM DA CORREÇÃO v8.0) ---
             
             button_control_to_update.text = f"Baixar: {nome_unico}"
             
-            # --- (CORREÇÃO v7.4 - AGORA VAI FUNCIONAR) ---
-            # O 'download=True' irá funcionar após o pip upgrade
-            button_control_to_update.on_click = lambda e, url=url_download: self.page.launch_url(url, download=True)
-            # --- (FIM DA CORREÇÃO v7.4) ---
+            # Remove o argumento 'download=True' para compatibilidade
+            button_control_to_update.on_click = lambda e, url=url_download: self.page.launch_url(url)
             
             button_control_to_update.visible = True
             
