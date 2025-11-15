@@ -1,11 +1,17 @@
 # main.py
 # (Versão Lote 6 - Pronto para Web)
-# (REVERTIDO: Removemos toda a lógica de passar 'pickers' como argumento)
+# (CORRIGIDO v6: Define FLET_SECRET_KEY via os.environ)
 
 import flet as ft
 import os 
 import traceback 
-# import datetime # (Não é mais necessário aqui)
+
+# --- CORREÇÃO (Definir a variável de ambiente ANTES de ft.app) ---
+# Esta chave é necessária para a função page.get_upload_url()
+# Pode ser qualquer string longa e aleatória.
+os.environ["FLET_SECRET_KEY"] = "adicionar_uma_chave_secreta_longa_e_aleatoria_aqui_12345!"
+# --- FIM DA CORREÇÃO ---
+
 
 # Importa AMBOS os clientes
 from supabase_client import supabase, supabase_admin 
@@ -123,7 +129,6 @@ def main(page: ft.Page):
         view_ncs.on_data_changed_callback = on_data_changed_master
         view_nes = create_nes_view(page, on_data_changed=on_data_changed_master, error_modal=error_modal_global)
         
-        # --- (REVERTIDO) Chamada simples e original ---
         view_relatorios = create_relatorios_view(page, error_modal=error_modal_global)
         
         abas_principais = ft.Tabs(
@@ -234,7 +239,6 @@ def main(page: ft.Page):
             password_field.disabled = False
             error_modal_global.show(f"Utilizador ou senha inválidos.")
         except Exception as ex:
-            # (LOTE 5.2) Adiciona traceback para apanhar erros de "crash"
             print("--- ERRO CRÍTICO INESPERADO (TRACEBACK) ---")
             traceback.print_exc()
             print("---------------------------------------------")
@@ -304,7 +308,13 @@ if __name__ == "__main__":
     
     ft.app(
         target=main, 
-        view=ft.AppView.WEB_BROWSER, # <-- MUITO IMPORTANTE
+        view=ft.AppView.WEB_BROWSER, 
         assets_dir="assets",
+        upload_dir="uploads", 
+        
+        # --- CORREÇÃO (Removido o argumento 'secret_key') ---
+        # secret_key="... 
+        # --- FIM DA CORREÇÃO ---
+        
         port=port
     )

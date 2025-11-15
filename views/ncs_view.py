@@ -1,10 +1,15 @@
 # views/ncs_view.py
 # (Versão 17.8 - Lote 8.3: Adiciona Scroll Global)
+# (CORRIGIDO v6: Lógica de upload - Altera método para PUT)
 
 import flet as ft
 from supabase_client import supabase # Cliente 'anon'
 from datetime import datetime
 import traceback 
+
+import io       # <-- NECESSÁRIO
+import httpx    # <-- NÃO É MAIS NECESSÁRIO
+import os       # <-- NECESSÁRIO
 
 # --- IMPORTAÇÕES PARA PDF ---
 import pdfplumber
@@ -14,11 +19,7 @@ import re
 class NcsView(ft.Column):
     """
     Representa o conteúdo da aba Notas de Crédito (CRUD).
-    Versão 17.8 (Lote 8.3):
-    - (BUGFIX) Adiciona 'self.scroll = ft.ScrollMode.ADAPTIVE' para 
-      permitir que a aba inteira role em telas pequenas.
-    - (Ponto 5) Adiciona Dropdown de 'Seção' ao modal e tabela.
-    - (Ponto 3 & 4) Adiciona 'Valor Inicial' e '% Empenhado'.
+    (Corrigido para Flet v0.28.3)
     """
     
     def __init__(self, page, on_data_changed=None, error_modal=None):
@@ -35,15 +36,16 @@ class NcsView(ft.Column):
         self.spacing = 20
         self.padding = 20
         
-        # --- (CORREÇÃO LOTE 8.3) ---
-        self.scroll = ft.ScrollMode.ADAPTIVE # <-- ADICIONADO
-        # --- FIM DA CORREÇÃO ---
+        self.scroll = ft.ScrollMode.ADAPTIVE 
         
         self.progress_ring = ft.ProgressRing(visible=True, width=32, height=32)
         
+        # --- CORREÇÃO (Adicionado on_upload) ---
         self.file_picker_import = ft.FilePicker(
-            on_result=self.on_file_picker_result
+            on_result=self.on_file_picker_result,
+            on_upload=self.on_upload_progress  # <-- NOVO HANDLER
         )
+        # --- FIM DA CORREÇÃO ---
         
         # --- TABELA (Ponto 5) ---
         self.tabela_ncs = ft.DataTable(
@@ -251,10 +253,7 @@ class NcsView(ft.Column):
                         "Importar NC (SIAFI)",
                         icon="UPLOAD_FILE",
                         tooltip="Adicionar NC a partir de um PDF do SIAFI",
-                        on_click=lambda _: self.file_picker_import.pick_files(
-                            allow_multiple=False,
-                            allowed_extensions=["pdf"]
-                        )
+                        on_click=self.open_file_picker
                     )
                 ],
                 spacing=20
@@ -370,14 +369,41 @@ class NcsView(ft.Column):
         self.modal_txt_data_validade.value = selected_date.strftime('%Y-%m-%d') if selected_date else ""
         e.control.open = False
         self.modal_txt_data_validade.update()
-        
+
+    # --- INÍCIO DA CORREÇÃO DE IMPORTAÇÃO DE PDF ---
+    def open_file_picker(self, e):
+        """
+        Garante que o FilePicker está no overlay ANTES de o chamar.
+        """
+        try:
+            if self.file_picker_import and self.page:
+                if self.file_picker_import not in self.page.overlay:
+                    print("A re-adicionar file_picker_import ao overlay...")
+                    self.page.overlay.append(self.file_picker_import)
+                    self.page.update() 
+                
+                # Apenas chama pick_files. O on_result tratará do upload.
+                self.file_picker_import.pick_files(
+                    allow_multiple=False,
+                    allowed_extensions=["pdf"]
+                )
+                
+                self.page.update() 
+            else:
+                print("ERRO: file_picker_import ou page não estão disponíveis.")
+                self.show_error("Erro: O componente de seleção de ficheiro não foi inicializado.")
+        except Exception as ex:
+            print(f"Erro em open_file_picker: {ex}")
+            traceback.print_exc()
+            self.show_error(f"Erro ao tentar abrir diálogo: {ex}")
+    # --- FIM DA CORREÇÃO DE IMPORTAÇÃO DE PDF ---
+
     # --- (NOVO - Ponto 5) Funções de Seção ---
     
     def load_secoes_cache(self):
         """Carrega o cache de ID/Nome das seções para a tabela."""
         print("NcsView: A carregar cache de seções...")
         try:
-            # Usamos o cliente 'anon' (supabase) pois todos podem ler seções
             resposta = supabase.table('secoes').select('id, nome').execute()
             if resposta.data:
                 self.secoes_cache = {secao['id']: secao['nome'] for secao in resposta.data}
@@ -477,7 +503,6 @@ class NcsView(ft.Column):
         self.page.update()
         
         try:
-            # (MODIFICADO - Pontos 3, 4, 5)
             query = supabase.table('ncs_com_saldos').select(
                 'id, numero_nc, pi, natureza_despesa, status_calculado, '
                 'valor_inicial, saldo_disponivel, total_empenhado, id_secao, ' 
@@ -503,7 +528,6 @@ class NcsView(ft.Column):
                     obs_texto = nc.get('observacao', '')
                     obs_curta = (obs_texto[:30] + '...') if len(obs_texto) > 30 else obs_texto
                     
-                    # (Ponto 4) Cálculo da Percentagem
                     valor_ini = float(nc.get('valor_inicial', 0))
                     total_emp = float(nc.get('total_empenhado', 0)) 
                     
@@ -513,16 +537,15 @@ class NcsView(ft.Column):
                     else:
                         percentual_str = "N/A"
                     
-                    # (Ponto 5) Obter nome da Seção
                     secao_id = nc.get('id_secao')
-                    secao_nome = self.secoes_cache.get(secao_id, "N/A") # Usa o cache
+                    secao_nome = self.secoes_cache.get(secao_id, "N/A") 
                     
                     self.tabela_ncs.rows.append(
                         ft.DataRow(
                             cells=[
                                 ft.DataCell(ft.Text(nc.get('numero_nc', ''))),
                                 ft.DataCell(ft.Text(nc.get('pi', ''))),
-                                ft.DataCell(ft.Text(secao_nome)), # <-- (NOVO - Ponto 5)
+                                ft.DataCell(ft.Text(secao_nome)), 
                                 ft.DataCell(ft.Text(nc.get('status_calculado', ''))),
                                 ft.DataCell(ft.Text(self.formatar_moeda(valor_ini))),
                                 ft.DataCell(ft.Text(self.formatar_moeda(nc.get('saldo_disponivel')), weight=ft.FontWeight.BOLD)),
@@ -548,7 +571,7 @@ class NcsView(ft.Column):
                         ft.DataCell(ft.Text("")), ft.DataCell(ft.Text("")),
                         ft.DataCell(ft.Text("")), ft.DataCell(ft.Text("")),
                         ft.DataCell(ft.Text("")), ft.DataCell(ft.Text("")),
-                        ft.DataCell(ft.Text("")), # (Ponto 5)
+                        ft.DataCell(ft.Text("")), 
                     ])
                 )
             print("NCs: Dados carregados com sucesso.")
@@ -572,7 +595,6 @@ class NcsView(ft.Column):
         self.modal_form_btn_salvar.text = "Salvar"
         self.modal_form_btn_salvar.icon = "SAVE"
         
-        # (NOVO - Ponto 5) Carrega o dropdown
         self.load_secoes_para_dropdown()
         
         self.modal_txt_numero_nc.value = "" 
@@ -585,12 +607,12 @@ class NcsView(ft.Column):
         self.modal_txt_pi.value = ""
         self.modal_txt_ug_gestora.value = ""
         self.modal_txt_observacao.value = ""
-        self.modal_dd_secao.value = None # (NOVO - Ponto 5)
+        self.modal_dd_secao.value = None 
         
         for campo in [self.modal_txt_numero_nc, self.modal_txt_data_recebimento, self.modal_txt_data_validade,
                       self.modal_txt_valor_inicial, self.modal_txt_ptres, self.modal_txt_nd,
                       self.modal_txt_fonte, self.modal_txt_pi, self.modal_txt_ug_gestora,
-                      self.modal_txt_observacao, self.modal_dd_secao]: # (Ponto 5)
+                      self.modal_txt_observacao, self.modal_dd_secao]: 
             campo.error_text = None
             
         self.modal_form.open = True
@@ -604,7 +626,6 @@ class NcsView(ft.Column):
         self.modal_form_btn_salvar.text = "Atualizar"
         self.modal_form_btn_salvar.icon = "UPDATE"
         
-        # (NOVO - Ponto 5) Carrega o dropdown
         self.load_secoes_para_dropdown()
 
         numero_nc_sem_prefixo = nc.get('numero_nc', '').upper().replace("2025NC", "")
@@ -619,12 +640,12 @@ class NcsView(ft.Column):
         self.modal_txt_pi.value = nc.get('pi', '')
         self.modal_txt_ug_gestora.value = nc.get('ug_gestora', '')
         self.modal_txt_observacao.value = nc.get('observacao', '')
-        self.modal_dd_secao.value = nc.get('id_secao') # (NOVO - Ponto 5)
+        self.modal_dd_secao.value = nc.get('id_secao') 
         
         for campo in [self.modal_txt_numero_nc, self.modal_txt_data_recebimento, self.modal_txt_data_validade,
                       self.modal_txt_valor_inicial, self.modal_txt_ptres, self.modal_txt_nd,
                       self.modal_txt_fonte, self.modal_txt_pi, self.modal_txt_ug_gestora,
-                      self.modal_txt_observacao, self.modal_dd_secao]: # (Ponto 5)
+                      self.modal_txt_observacao, self.modal_dd_secao]: 
             campo.error_text = None
             
         self.modal_form.open = True
@@ -638,7 +659,6 @@ class NcsView(ft.Column):
     def save_nc(self, e):
         """ Salva (INSERT) ou Atualiza (UPDATE) uma NC (V17.7). """
         
-        # 1. Validação
         try:
             print("A validar dados da NC...")
             campos_obrigatorios = [
@@ -677,20 +697,18 @@ class NcsView(ft.Column):
                 "pi": self.modal_txt_pi.value.strip(),
                 "ug_gestora": self.modal_txt_ug_gestora.value.strip(),
                 "observacao": self.modal_txt_observacao.value.strip(),
-                "id_secao": self.modal_dd_secao.value, # (NOVO - Ponto 5)
+                "id_secao": self.modal_dd_secao.value, 
             }
         except Exception as ex_validation:
             print(f"Erro na validação de dados: {ex_validation}")
             self.show_error(f"Erro nos dados: {ex_validation}")
             return
 
-        # 2. Feedback de Loading (Lote 2)
         self.modal_form_loading_ring.visible = True
         self.modal_form_btn_cancelar.disabled = True
         self.modal_form_btn_salvar.disabled = True
         self.modal_form.update()
 
-        # 3. Execução (com try/except/finally)
         try:
             if self.id_sendo_editado is None:
                 print(f"A inserir nova NC no Supabase como: {numero_formatado}...")
@@ -705,7 +723,7 @@ class NcsView(ft.Column):
             self.show_success_snackbar(msg_sucesso)
             
             self.close_modal(None)
-            self.load_secoes_cache() # (Ponto 5) Recarrega o cache para a tabela
+            self.load_secoes_cache() 
             self.load_filter_options() 
             self.load_ncs_data() 
             if self.on_data_changed_callback:
@@ -801,7 +819,6 @@ class NcsView(ft.Column):
              self.show_error("Erro: Nenhuma NC selecionada para recolhimento.")
              return
              
-        # 1. Validação
         try:
             print("A validar dados do Recolhimento...")
             has_error = False
@@ -830,13 +847,11 @@ class NcsView(ft.Column):
             self.show_error(f"Erro nos dados: {ex_validation}")
             return
             
-        # 2. Feedback de Loading (Lote 2)
         self.modal_rec_loading_ring.visible = True
         self.modal_rec_btn_cancelar.disabled = True
         self.modal_rec_btn_salvar.disabled = True
         self.recolhimento_modal.update()
 
-        # 3. Execução (com try/except/finally)
         try:
             print("A inserir Recolhimento no Supabase...")
             supabase.table('recolhimentos_de_saldo').insert(dados_para_inserir).execute()
@@ -890,7 +905,7 @@ class NcsView(ft.Column):
             self.show_success_snackbar("Nota de Crédito excluída com sucesso.")
             
             self.close_confirm_delete_nc(None)
-            self.load_secoes_cache() # (Ponto 5) Recarrega o cache
+            self.load_secoes_cache() 
             self.load_filter_options() 
             self.load_ncs_data() 
             if self.on_data_changed_callback:
@@ -901,37 +916,111 @@ class NcsView(ft.Column):
             self.handle_db_error(ex, "excluir NC")
             self.close_confirm_delete_nc(None)
             
-    # --- FUNÇÕES DE IMPORTAÇÃO DE PDF (V14 - Adiciona Observação) ---
+    # --- FUNÇÕES DE IMPORTAÇÃO DE PDF (CORRIGIDAS PARA WEB v0.28.3) ---
 
     def on_file_picker_result(self, e: ft.FilePickerResultEvent):
-        if e.files:
-            file_path = e.files[0].path
-            print(f"A processar ficheiro PDF: {file_path}")
-            self.progress_ring.visible = True
-            self.update()
-            
-            try:
-                dados_extraidos = self._parse_siafi_pdf(file_path)
-                
-                if dados_extraidos:
-                    print(f"Dados extraídos com sucesso: {dados_extraidos}")
-                    self.preencher_modal_com_dados(dados_extraidos)
-                else:
-                    self.show_error("Não foi possível extrair dados do PDF. Verifique o console.")
-                    
-            except Exception as ex:
-                print(f"Erro ao processar o PDF: {ex}")
-                traceback.print_exc()
-                self.show_error(f"Erro ao ler o ficheiro PDF: {ex}")
-            
-            finally: 
-                self.progress_ring.visible = False
-                self.update()
+        """
+        Passo 2: O utilizador selecionou um ficheiro.
+        Agora obtemos uma URL de upload e chamamos file_picker.upload().
+        """
+        if not e.files:
+            print("on_file_picker_result: O utilizador cancelou.")
+            return
 
-    def _parse_siafi_pdf(self, file_path: str):
+        # 1. Obter o nome do ficheiro
+        file_name = e.files[0].name
+        print(f"on_file_picker_result: Ficheiro selecionado: {file_name}")
+
+        try:
+            # 2. Pedir uma URL de upload ao Flet
+            # Esta URL aponta para a pasta 'uploads' no servidor
+            upload_url = self.page.get_upload_url(file_name, 60) # Expira em 60s
+            print(f"on_file_picker_result: URL de upload obtida: {upload_url}")
+
+            # 3. Criar a lista de ficheiros para upload
+            upload_list = [
+                ft.FilePickerUploadFile(
+                    file_name,
+                    upload_url,
+                    method="PUT" # <-- CORRIGIDO DE "POST" PARA "PUT"
+                )
+            ]
+
+            # 4. Iniciar o upload
+            self.progress_ring.visible = True
+            self.page.update()
+            print("on_file_picker_result: A iniciar upload...")
+            self.file_picker_import.upload(upload_list)
+
+        except Exception as ex:
+            print(f"Erro em on_file_picker_result: {ex}")
+            traceback.print_exc()
+            self.show_error(f"Erro ao iniciar upload: {ex}")
+            self.progress_ring.visible = False
+            self.page.update()
+
+    def on_upload_progress(self, e: ft.FilePickerUploadEvent):
+        """
+        Passo 3: Chamado pelo Flet quando o upload está completo (ou falha).
+        """
+        if e.error:
+            print(f"on_upload_progress: ERRO: {e.error}")
+            self.show_error(f"Erro durante o upload: {e.error}")
+            self.progress_ring.visible = False
+            self.page.update()
+            return
+        
+        if e.progress < 1.0:
+            # Opcional: pode atualizar uma barra de progresso aqui
+            # print(f"Progresso: {e.progress * 100}%")
+            return
+
+        print("on_upload_progress: Upload 100% concluído.")
+        
+        # O ficheiro está agora no servidor, na pasta 'uploads'
+        file_name = e.file_name
+        file_path_no_servidor = os.path.join("uploads", file_name)
+        
+        print(f"on_upload_progress: A processar ficheiro em: {file_path_no_servidor}")
+        
+        try:
+            # Verificamos se o ficheiro realmente existe
+            if not os.path.exists(file_path_no_servidor):
+                print(f"Erro: O caminho '{file_path_no_servidor}' não existe no servidor.")
+                self.show_error(f"Erro: Ficheiro não encontrado no servidor após upload.")
+                return
+
+            # Passamos o caminho do servidor DIRETAMENTE para o pdfplumber
+            dados_extraidos = self._parse_siafi_pdf(file_path_no_servidor) 
+            
+            if dados_extraidos:
+                print("Dados extraídos com sucesso.")
+                self.preencher_modal_com_dados(dados_extraidos)
+            else:
+                self.show_error("Não foi possível extrair dados do PDF. Verifique o console.")
+                
+        except Exception as ex:
+            print(f"Erro ao processar o PDF pós-upload: {ex}")
+            traceback.print_exc()
+            self.show_error(f"Erro ao ler o ficheiro PDF: {ex}")
+        
+        finally: 
+            self.progress_ring.visible = False
+            self.page.update()
+            # Opcional: Limpar o ficheiro temporário do servidor
+            # try:
+            #     if os.path.exists(file_path_no_servidor):
+            #         os.remove(file_path_no_servidor)
+            #         print(f"Ficheiro temporário '{file_path_no_servidor}' removido.")
+            # except Exception as ex_clean:
+            #     print(f"Aviso: Não foi possível remover o ficheiro temporário: {ex_clean}")
+
+
+    def _parse_siafi_pdf(self, file_path_or_object): # O nome agora é genérico
         texto_completo = ""
         
-        with pdfplumber.open(file_path) as pdf:
+        # pdfplumber.open() aceita um caminho (str) ou um objeto (bytes)
+        with pdfplumber.open(file_path_or_object) as pdf:
             primeira_pagina = pdf.pages[0]
             texto_completo = primeira_pagina.extract_text(layout=True, x_tolerance=2)
 

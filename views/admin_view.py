@@ -23,6 +23,7 @@ class AdminView(ft.Column):
         self.spacing = 20
         self.padding = 20
         self.error_modal = error_modal
+        self.scroll = ft.ScrollMode.ADAPTIVE
         
         self.progress_ring_users = ft.ProgressRing(visible=True, width=32, height=32)
         
