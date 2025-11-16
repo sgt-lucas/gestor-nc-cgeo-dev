@@ -1,6 +1,6 @@
 # main.py
-# (Versão Refatorada v2.1 - Performance)
-# (Corrige o 'AssertionError' ao remover a chamada manual do 'on_mount')
+# (Versão Refatorada v2.2 - Performance)
+# (Corrige o callback 'on_data_changed_master' para apenas atualizar caches)
 
 import flet as ft
 import os 
@@ -164,18 +164,23 @@ def main(page: ft.Page):
             ]
         )
 
-        view_dashboard = create_dashboard_view(page, error_modal=error_modal_global)
-        view_ncs = create_ncs_view(page, error_modal=error_modal_global)
+        # --- (INÍCIO DA CORREÇÃO v2.2) ---
+        # Instancia as views, mas NÃO as armazena em variáveis
+        # O 'create_..._view' já as regista internamente
         
+        # O 'on_data_changed_master' agora é mais inteligente
         def on_data_changed_master(e):
-            print("Callback Mestre: Recarregando caches e views...")
-            
+            """
+            Chamado quando uma NE ou NC é salva/excluída.
+            Recarrega APENAS os caches que podem ter mudado.
+            """
+            print("Callback Mestre: Recarregando caches voláteis...")
             try:
                 # Recarrega caches que MUDAM (lista de NCs)
                 ncs_resp = supabase.table('notas_de_credito').select('id, numero_nc').order('numero_nc').execute()
                 page.session.set("cache_ncs_lista", ncs_resp.data or [])
                 
-                # (Opcional) Recarrega PIs/NDs se uma NC/NE puder criar um novo
+                # Recarrega PIs/NDs
                 pis_data = supabase.rpc('get_distinct_pis').execute().data
                 page.session.set("cache_pis", pis_data or [])
                 nds_data = supabase.rpc('get_distinct_nds').execute().data
@@ -185,15 +190,18 @@ def main(page: ft.Page):
             except Exception as ex:
                 print(f"Erro ao atualizar caches voláteis: {ex}")
             
-            # Atualiza as views
-            if view_dashboard: view_dashboard.load_dashboard_data(None)
-            if view_ncs: view_ncs.load_ncs_data()
+            # NÃO chama mais 'view_dashboard.load_dashboard_data()'
+            # NÃO chama mais 'view_ncs.load_ncs_data()'
+            # A view VISÍVEL já fará isso (ex: nes_view.load_nes_data())
+            # A view invisível (ex: dashboard) carregará quando for clicada.
         
-        view_ncs.on_data_changed_callback = on_data_changed_master
-        view_nes = create_nes_view(page, on_data_changed=on_data_changed_master, error_modal=error_modal_global)
-        view_relatorios = create_relatorios_view(page, error_modal=error_modal_global)
-        
-        all_views = [view_dashboard, view_ncs, view_nes, view_relatorios]
+        # Cria as views
+        all_views = [
+            create_dashboard_view(page, error_modal=error_modal_global),
+            create_ncs_view(page, on_data_changed=on_data_changed_master, error_modal=error_modal_global),
+            create_nes_view(page, on_data_changed=on_data_changed_master, error_modal=error_modal_global),
+            create_relatorios_view(page, error_modal=error_modal_global)
+        ]
         
         navigation_destinations = [
             ft.NavigationRailDestination(
@@ -219,8 +227,7 @@ def main(page: ft.Page):
         ]
         
         if page.session.get("user_funcao") == "admin":
-            view_admin = create_admin_view(page, error_modal=error_modal_global)
-            all_views.append(view_admin)
+            all_views.append(create_admin_view(page, error_modal=error_modal_global))
             navigation_destinations.append(
                 ft.NavigationRailDestination(
                     icon="ADMIN_PANEL_SETTINGS_OUTLINED",
@@ -236,18 +243,15 @@ def main(page: ft.Page):
             alignment=ft.alignment.top_left
         )
         
-        # --- (INÍCIO DA CORREÇÃO v2.1) ---
         def switch_view(e):
             index = e.control.selected_index
             view_container.content = all_views[index]
             
-            # REMOVIDA a chamada manual ao on_mount.
-            # O Flet irá chamar o on_mount da view automaticamente
+            # O Flet irá chamar o 'on_mount' da view automaticamente
             # DEPOIS que a linha 'view_container.update()' for executada.
-            # Isto corrige o 'AssertionError'.
             
             view_container.update()
-        # --- (FIM DA CORREÇÃO v2.1) ---
+        # --- (FIM DA CORREÇÃO v2.2) ---
             
         navigation_rail = ft.NavigationRail(
             selected_index=0,
