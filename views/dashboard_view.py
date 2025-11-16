@@ -1,5 +1,6 @@
 # views/dashboard_view.py
-# (Versão 5.7 - Lote 8.3: Adiciona Scroll Global)
+# (Versão Refatorada v1.2 - Layout Moderno)
+# (Organiza a UI em Cards)
 
 import flet as ft
 import traceback 
@@ -9,10 +10,7 @@ from datetime import datetime, timedelta
 class DashboardView(ft.Column):
     """
     Representa o conteúdo da aba Dashboard.
-    Versão 5.7 (Lote 8.3):
-    - (BUGFIX) Adiciona 'self.scroll = ft.ScrollMode.ADAPTIVE' para 
-      permitir que a aba inteira role em telas pequenas.
-    - (Ponto 3) Adiciona a coluna 'Valor Inicial' à tabela de NCs a vencer.
+    (v1.2) Refatorado para usar Cards.
     """
     
     def __init__(self, page, error_modal=None):
@@ -20,17 +18,15 @@ class DashboardView(ft.Column):
         self.page = page
         self.alignment = ft.MainAxisAlignment.START
         self.spacing = 20
-        self.padding = 20
+        # self.padding = 20 (Removido, pois o main.py já fornece padding)
         self.error_modal = error_modal
         
-        # --- (CORREÇÃO LOTE 8.3) ---
-        self.scroll = ft.ScrollMode.ADAPTIVE # <-- ADICIONADO
-        # --- FIM DA CORREÇÃO ---
+        # (v1.2) O scroll agora é controlado pelo contentor principal no main.py
+        # self.scroll = ft.ScrollMode.ADAPTIVE 
         
         self.progress_ring = ft.ProgressRing(visible=True, width=32, height=32)
         self.txt_saldo_total = ft.Text("R$ 0,00", size=32, weight=ft.FontWeight.BOLD)
         
-        # --- TABELA "A VENCER" (Ponto 3) ---
         self.tabela_vencendo = ft.DataTable(
             columns=[
                 ft.DataColumn(ft.Text("Número NC", weight=ft.FontWeight.BOLD)),
@@ -46,7 +42,7 @@ class DashboardView(ft.Column):
             border_radius=8,
         )
         
-        # --- CONTROLOS DE FILTRO ---
+        # --- CONTROLOS DE FILTRO (Sem alteração) ---
         self.filtro_pi = ft.Dropdown(
             label="Filtrar Saldo por PI",
             options=[ft.dropdown.Option(text="Carregando...", disabled=True)],
@@ -68,7 +64,7 @@ class DashboardView(ft.Column):
                 ft.dropdown.Option(text="Cancelada", key="Cancelada"),
             ],
             value="Ativa",
-            width=200,
+            expand=True,
             on_change=self.load_dashboard_data_wrapper
         )
         self.btn_limpar_filtros = ft.IconButton(
@@ -77,46 +73,84 @@ class DashboardView(ft.Column):
             on_click=self.limpar_filtros
         )
 
-        # --- LAYOUT ---
-        self.controls = [
-            ft.Row(
-                [
-                    ft.Text("Saldo Disponível Total", size=20, weight=ft.FontWeight.W_600),
-                    ft.Row([
-                        ft.IconButton(icon="REFRESH", on_click=self.load_dashboard_data_wrapper, tooltip="Recarregar e Aplicar Filtros"),
-                        self.progress_ring,
-                    ])
-                ],
-                alignment=ft.MainAxisAlignment.SPACE_BETWEEN
-            ),
-            
-            ft.ResponsiveRow(
-                [
-                    ft.Column(col={"sm": 12, "md": 6}, controls=[self.filtro_pi]),
-                    ft.Column(col={"sm": 12, "md": 6}, controls=[self.filtro_nd]),
-                ]
-            ),
-            
-            ft.ResponsiveRow(
-                [
-                    ft.Column(col={"sm": 12, "md": 4}, controls=[self.filtro_status]),
-                    ft.Column(
-                        col={"sm": 12, "md": 2}, 
-                        controls=[self.btn_limpar_filtros],
-                    ),
-                ],
-                alignment=ft.MainAxisAlignment.START,
-                vertical_alignment=ft.CrossAxisAlignment.CENTER 
-            ),
+        # --- (INÍCIO DA REFATORAÇÃO VISUAL v1.2) ---
+        
+        # Card 1: Saldo e Filtros
+        card_saldo_e_filtros = ft.Card(
+            elevation=4,
+            content=ft.Container(
+                padding=20,
+                content=ft.Column(
+                    [
+                        # 1. Título do Card (com refresh)
+                        ft.Row(
+                            [
+                                ft.Text("Saldo Disponível Total", size=20, weight="w600"),
+                                ft.Row([
+                                    self.btn_limpar_filtros,
+                                    ft.IconButton(
+                                        icon="REFRESH", 
+                                        on_click=self.load_dashboard_data_wrapper, 
+                                        tooltip="Recarregar e Aplicar Filtros"
+                                    ),
+                                    self.progress_ring,
+                                ])
+                            ],
+                            alignment="spaceBetween"
+                        ),
+                        
+                        # 2. O Saldo (o KPI)
+                        ft.Container(
+                            content=self.txt_saldo_total,
+                            padding=ft.padding.only(top=10, bottom=20)
+                        ),
 
-            self.txt_saldo_total,
-            ft.Divider(),
-            ft.Text("Notas de Crédito a Vencer (Próximos 7 dias)", size=20, weight=ft.FontWeight.W_600),
-            ft.Container(
-                content=self.tabela_vencendo,
-                expand=True
+                        # 3. Filtros
+                        ft.Text("Filtros do Saldo:", weight="bold"),
+                        ft.ResponsiveRow(
+                            [
+                                ft.Column(col={"sm": 12, "md": 6}, controls=[self.filtro_pi]),
+                                ft.Column(col={"sm": 12, "md": 6}, controls=[self.filtro_nd]),
+                            ]
+                        ),
+                        ft.ResponsiveRow(
+                            [
+                                ft.Column(col={"sm": 12, "md": 6}, controls=[self.filtro_status]),
+                            ],
+                        )
+                    ],
+                    spacing=15
+                )
             )
+        )
+
+        # Card 2: Tabela "A Vencer"
+        card_tabela_vencer = ft.Card(
+            elevation=4,
+            expand=True, # Faz este card preencher o resto do espaço
+            content=ft.Container(
+                padding=20,
+                content=ft.Column(
+                    [
+                        ft.Text("Notas de Crédito a Vencer (Próximos 7 dias)", size=20, weight="w600"),
+                        ft.Divider(),
+                        ft.Container(
+                            content=self.tabela_vencendo,
+                            expand=True # Faz a tabela expandir dentro do card
+                        )
+                    ],
+                    expand=True,
+                    spacing=15
+                )
+            )
+        )
+
+        # Define os novos controlos
+        self.controls = [
+            card_saldo_e_filtros,
+            card_tabela_vencer,
         ]
+        # --- (FIM DA REFATORAÇÃO VISUAL v1.2) ---
 
         self.on_mount = self.on_view_mount
         
@@ -235,7 +269,6 @@ class DashboardView(ft.Column):
             
             saldo_total = 0.0
             if resposta_saldo.data:
-                # (Correção Lote 7)
                 saldo_total = sum(float(item['saldo_disponivel']) for item in resposta_saldo.data)
             
             self.txt_saldo_total.value = self.formatar_moeda(saldo_total)
@@ -244,7 +277,6 @@ class DashboardView(ft.Column):
             hoje = datetime.now().date()
             em_7_dias = hoje + timedelta(days=7)
             
-            # (MODIFICADO - Ponto 3) Adicionado 'valor_inicial'
             resposta_vencendo = supabase.table('ncs_com_saldos') \
                                         .select('numero_nc, data_validade_empenho, saldo_disponivel, pi, natureza_despesa, valor_inicial') \
                                         .filter('status_calculado', 'eq', 'Ativa') \
@@ -266,7 +298,6 @@ class DashboardView(ft.Column):
                                 ft.DataCell(ft.Text(data_formatada)),
                                 ft.DataCell(ft.Text(nc['pi'])),
                                 ft.DataCell(ft.Text(nc['natureza_despesa'])),
-                                # (NOVO - Ponto 3)
                                 ft.DataCell(ft.Text(self.formatar_moeda(nc['valor_inicial']))),
                                 ft.DataCell(ft.Text(self.formatar_moeda(saldo_nc))),
                             ]
@@ -278,7 +309,7 @@ class DashboardView(ft.Column):
                         ft.DataCell(ft.Text("Nenhuma NC a vencer nos próximos 7 dias.", italic=True)),
                         ft.DataCell(ft.Text("")), ft.DataCell(ft.Text("")),
                         ft.DataCell(ft.Text("")), ft.DataCell(ft.Text("")),
-                        ft.DataCell(ft.Text("")), # (NOVO - Ponto 3) Célula vazia para alinhar
+                        ft.DataCell(ft.Text("")), 
                     ])
                 )
 

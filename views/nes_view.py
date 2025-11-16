@@ -1,5 +1,6 @@
 # views/nes_view.py
-# (Versão 7.5 - Lote 8.3: Adiciona Scroll Global)
+# (Versão Refatorada v1.3 - Layout Moderno)
+# (Corrige o carregamento do filtro de NC e adiciona scroll à tabela)
 
 import flet as ft
 from supabase_client import supabase # Cliente 'anon'
@@ -9,9 +10,7 @@ import traceback
 class NesView(ft.Column):
     """
     Representa o conteúdo da aba Notas de Empenho (CRUD).
-    Versão 7.5 (Lote 8.3):
-    - (BUGFIX) Adiciona 'self.scroll = ft.ScrollMode.ADAPTIVE' para 
-      permitir que a aba inteira role em telas pequenas.
+    (v1.3) Corrige filtro e scroll.
     """
     def __init__(self, page, on_data_changed=None, error_modal=None):
         super().__init__()
@@ -24,15 +23,9 @@ class NesView(ft.Column):
         
         self.alignment = ft.MainAxisAlignment.START
         self.spacing = 20
-        self.padding = 20
         
-        # --- (CORREÇÃO LOTE 8.3) ---
-        self.scroll = ft.ScrollMode.ADAPTIVE # <-- ADICIONADO
-        # --- FIM DA CORREÇÃO ---
-
         self.progress_ring = ft.ProgressRing(visible=True, width=32, height=32)
         
-        # --- TABELA ---
         self.tabela_nes = ft.DataTable(
             columns=[
                 ft.DataColumn(ft.Text("Nº Empenho", weight=ft.FontWeight.BOLD)),
@@ -48,7 +41,7 @@ class NesView(ft.Column):
             border_radius=8,
         )
 
-        # --- Modais (Lote 5) ---
+        # --- Modais (Sem alteração) ---
         self.modal_dropdown_nc = ft.Dropdown(label="Vincular à NC (Obrigatório)")
         
         self.modal_txt_numero_ne = ft.TextField(
@@ -127,7 +120,7 @@ class NesView(ft.Column):
             actions_alignment=ft.MainAxisAlignment.END,
         )
         
-        # --- CONTROLOS DE FILTRO ---
+        # --- CONTROLOS DE FILTRO (Sem alteração) ---
         self.filtro_pesquisa_ne = ft.TextField(
             label="Pesquisar por Nº NE", 
             hint_text="Digite parte do número...",
@@ -160,45 +153,85 @@ class NesView(ft.Column):
             on_click=self.limpar_filtros
         )
 
-        # --- LAYOUT ATUALIZADO (com filtros Lote 1) ---
-        self.controls = [
-            ft.Row(
-                [
-                    ft.Text("Gestão de Notas de Empenho", size=20, weight=ft.FontWeight.W_600),
-                    ft.Row([
-                        ft.IconButton(icon="REFRESH", on_click=self.load_nes_data_wrapper, tooltip="Recarregar e Aplicar Filtros"),
-                        self.progress_ring,
-                    ])
-                ],
-                alignment=ft.MainAxisAlignment.SPACE_BETWEEN
-            ),
-            ft.ElevatedButton("Adicionar Nova NE", icon="ADD", on_click=self.open_add_modal),
-            
-            ft.Row([
-                self.filtro_pesquisa_ne,
-                self.filtro_nc_vinculada,
-            ]),
-            ft.Row([
-                self.filtro_pi,
-                self.filtro_nd,
-                self.btn_limpar_filtros
-            ]),
-            
-            ft.Divider(),
-            ft.Container(
-                content=self.tabela_nes,
-                expand=True
+        # --- (INÍCIO DA REFATORAÇÃO VISUAL v1.3) ---
+        
+        # Card 1: Ações e Filtros
+        card_acoes_e_filtros = ft.Card(
+            elevation=4,
+            content=ft.Container(
+                padding=20,
+                content=ft.Column(
+                    [
+                        ft.Row(
+                            [
+                                ft.Text("Gestão de Notas de Empenho", size=20, weight=ft.FontWeight.W_600),
+                                ft.Row([
+                                    ft.IconButton(
+                                        icon="REFRESH", 
+                                        on_click=self.load_nes_data_wrapper, 
+                                        tooltip="Recarregar e Aplicar Filtros"
+                                    ),
+                                    self.progress_ring,
+                                ])
+                            ],
+                            alignment=ft.MainAxisAlignment.SPACE_BETWEEN
+                        ),
+                        ft.ElevatedButton("Adicionar Nova NE", icon="ADD", on_click=self.open_add_modal),
+                        
+                        ft.Divider(),
+                        ft.Text("Filtros de Exibição:", weight=ft.FontWeight.BOLD),
+                        ft.Row([
+                            self.filtro_pesquisa_ne,
+                            self.filtro_nc_vinculada,
+                        ]),
+                        ft.Row([
+                            self.filtro_pi,
+                            self.filtro_nd,
+                            self.btn_limpar_filtros
+                        ]),
+                    ],
+                    spacing=15
+                )
             )
+        )
+        
+        # Card 2: Tabela de Dados
+        card_tabela_nes = ft.Card(
+            elevation=4,
+            expand=True,
+            content=ft.Container(
+                padding=20,
+                content=ft.Column(
+                    [
+                        # --- (CORREÇÃO v1.3 - Scroll) ---
+                        # Adiciona um Column com scroll e expand=True
+                        # para conter a tabela, permitindo scroll vertical
+                        # e horizontal (adaptativo).
+                        ft.Column(
+                            [self.tabela_nes],
+                            scroll=ft.ScrollMode.ADAPTIVE,
+                            expand=True
+                        )
+                        # --- (FIM DA CORREÇÃO v1.3) ---
+                    ],
+                    expand=True
+                )
+            )
+        )
+        
+        self.controls = [
+            card_acoes_e_filtros,
+            card_tabela_nes
         ]
+        # --- (FIM DA REFATORAÇÃO VISUAL v1.3) ---
+
 
         self.page.overlay.append(self.modal_form)
         self.page.overlay.append(self.confirm_delete_dialog)
         self.page.overlay.append(self.date_picker_empenho) 
         
-        # (CORREÇÃO LOTE 5.4)
         self.on_mount = self.on_view_mount
         
-
     def on_view_mount(self, e):
         """Chamado pelo Flet DEPOIS que o controlo é adicionado à página."""
         print("NesView: Controlo montado. A carregar dados...")
@@ -262,7 +295,6 @@ class NesView(ft.Column):
         except (ValueError, TypeError):
             return "0,00"
             
-    # (LOTE 5)
     def format_currency_input(self, e: ft.ControlEvent):
         """Formata o valor monetário_automaticamente ao digitar."""
         try:
@@ -287,11 +319,14 @@ class NesView(ft.Column):
 
     def load_nc_filter_options(self):
         """
-        (LOTE 1, Item 3 - CORRIGIDO)
+        (v1.3) Corrige o carregamento para usar a tabela 'notas_de_credito'
         """
         print("NEs: A carregar NCs para o filtro...")
         try:
-            resposta_ncs = supabase.table('ncs_com_saldos').select('id, numero_nc').order('numero_nc', desc=False).execute()
+            # --- (CORREÇÃO v1.3 - Eficiência) ---
+            # Troca a consulta da view 'ncs_com_saldos' pela tabela 'notas_de_credito'
+            resposta_ncs = supabase.table('notas_de_credito').select('id, numero_nc').order('numero_nc', desc=False).execute()
+            # --- (FIM DA CORREÇÃO v1.3) ---
 
             self.filtro_nc_vinculada.options.clear()
             self.filtro_nc_vinculada.options.append(ft.dropdown.Option(text="Todas as NCs", key=None))
@@ -308,7 +343,6 @@ class NesView(ft.Column):
             self.update()
 
         except Exception as ex:
-            # (DEBUG LOTE 7)
             print("--- ERRO CRÍTICO (TRACEBACK) NO NES [load_nc_filter_options] ---")
             traceback.print_exc()
             print("----------------------------------------------------------------")
@@ -352,7 +386,6 @@ class NesView(ft.Column):
                 self.update() 
                 
         except Exception as ex: 
-            # (DEBUG LOTE 7)
             print("--- ERRO CRÍTICO (TRACEBACK) NO NES [load_pi_nd_filter_options] ---")
             traceback.print_exc()
             print("---------------------------------------------------------------------")
@@ -435,7 +468,6 @@ class NesView(ft.Column):
             print("NEs: Dados carregados com sucesso.")
 
         except Exception as ex:
-            # (DEBUG LOTE 7)
             print("--- ERRO CRÍTICO (TRACEBACK) NO NES [load_nes_data] ---")
             traceback.print_exc()
             print("---------------------------------------------------------")

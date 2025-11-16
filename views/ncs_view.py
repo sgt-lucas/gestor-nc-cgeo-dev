@@ -1,15 +1,15 @@
 # views/ncs_view.py
-# (Versão 17.8 - Lote 8.3: Adiciona Scroll Global)
-# (CORRIGIDO v6: Lógica de upload - Altera método para PUT)
+# (Versão Refatorada v1.6 - Layout Moderno)
+# (Adiciona todos os campos orçamentários ao modal "Quick View")
 
 import flet as ft
 from supabase_client import supabase # Cliente 'anon'
 from datetime import datetime
 import traceback 
 
-import io       # <-- NECESSÁRIO
-import httpx    # <-- NÃO É MAIS NECESSÁRIO
-import os       # <-- NECESSÁRIO
+import io       
+import httpx    
+import os       
 
 # --- IMPORTAÇÕES PARA PDF ---
 import pdfplumber
@@ -19,7 +19,7 @@ import re
 class NcsView(ft.Column):
     """
     Representa o conteúdo da aba Notas de Crédito (CRUD).
-    (Corrigido para Flet v0.28.3)
+    (v1.6) Modal "Quick View" exibe todos os dados.
     """
     
     def __init__(self, page, on_data_changed=None, error_modal=None):
@@ -34,31 +34,21 @@ class NcsView(ft.Column):
         
         self.alignment = ft.MainAxisAlignment.START
         self.spacing = 20
-        self.padding = 20
-        
-        self.scroll = ft.ScrollMode.ADAPTIVE 
         
         self.progress_ring = ft.ProgressRing(visible=True, width=32, height=32)
         
-        # --- CORREÇÃO (Adicionado on_upload) ---
         self.file_picker_import = ft.FilePicker(
             on_result=self.on_file_picker_result,
-            on_upload=self.on_upload_progress  # <-- NOVO HANDLER
+            on_upload=self.on_upload_progress 
         )
-        # --- FIM DA CORREÇÃO ---
         
-        # --- TABELA (Ponto 5) ---
         self.tabela_ncs = ft.DataTable(
             columns=[
                 ft.DataColumn(ft.Text("Número NC", weight=ft.FontWeight.BOLD)),
                 ft.DataColumn(ft.Text("PI", weight=ft.FontWeight.BOLD)),
-                ft.DataColumn(ft.Text("Seção", weight=ft.FontWeight.BOLD)), 
-                ft.DataColumn(ft.Text("Status", weight=ft.FontWeight.BOLD)),
+                ft.DataColumn(ft.Text("ND", weight=ft.FontWeight.BOLD)),
                 ft.DataColumn(ft.Text("Valor Inicial", weight=ft.FontWeight.BOLD), numeric=True),
                 ft.DataColumn(ft.Text("Saldo Disp.", weight=ft.FontWeight.BOLD), numeric=True),
-                ft.DataColumn(ft.Text("% Empenhado", weight=ft.FontWeight.BOLD), numeric=True),
-                ft.DataColumn(ft.Text("Prazo Empenho", weight=ft.FontWeight.BOLD)),
-                ft.DataColumn(ft.Text("Observação", weight=ft.FontWeight.BOLD)), 
                 ft.DataColumn(ft.Text("Ações", weight=ft.FontWeight.BOLD)),
             ], 
             rows=[], 
@@ -67,208 +57,184 @@ class NcsView(ft.Column):
             border_radius=8,
         )
 
-        # --- Modais (Ponto 5) ---
+        # --- (INÍCIO DA ATUALIZAÇÃO v1.6) ---
+        # --- Novo Modal "Quick View" ---
+        self.quick_view_title = ft.Text("Detalhes da NC", size=20, weight=ft.FontWeight.BOLD)
+        self.qv_status = ft.Text(size=16)
+        self.qv_pi_nd = ft.Text(selectable=True)
+        # Novos campos para info orçamentária
+        self.qv_ptres_fonte = ft.Text(selectable=True)
+        self.qv_ug_secao = ft.Text(selectable=True)
         
-        self.modal_txt_numero_nc = ft.TextField(
-            label="Número da NC (6 dígitos)", 
-            prefix_text="2025NC",
-            input_filter=ft.InputFilter(r"[0-9]"), 
-            max_length=6,                           
-            keyboard_type=ft.KeyboardType.NUMBER
+        self.qv_valor_inicial = ft.Text(selectable=True)
+        self.qv_saldo = ft.Text(selectable=True)
+        self.qv_percent_empenhado = ft.Text(selectable=True)
+        self.qv_prazo = ft.Text(selectable=True)
+        self.qv_observacao = ft.Text(selectable=True, max_lines=5, overflow=ft.TextOverflow.ELLIPSIS)
+
+        self.quick_view_modal = ft.AlertDialog(
+            modal=True,
+            title=self.quick_view_title,
+            content=ft.Column(
+                [
+                    self.qv_status,
+                    ft.Divider(),
+                    ft.Text("Informação Orçamentária:", weight=ft.FontWeight.BOLD),
+                    self.qv_pi_nd,
+                    self.qv_ptres_fonte, # Adicionado
+                    self.qv_ug_secao,   # Adicionado
+                    ft.Divider(),
+                    ft.Text("Valores:", weight=ft.FontWeight.BOLD),
+                    self.qv_valor_inicial,
+                    self.qv_saldo,
+                    self.qv_percent_empenhado,
+                    ft.Divider(),
+                    ft.Text("Prazos:", weight=ft.FontWeight.BOLD),
+                    self.qv_prazo,
+                    ft.Divider(),
+                    ft.Text("Observação:", weight=ft.FontWeight.BOLD),
+                    self.qv_observacao,
+                ],
+                height=450, # Aumenta a altura para os novos campos
+                width=500,
+                scroll=ft.ScrollMode.ADAPTIVE
+            ),
+            actions=[
+                ft.TextButton("Fechar", on_click=self.close_quick_view_modal)
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
         )
-        
-        self.modal_dd_secao = ft.Dropdown(
-            label="Seção (Opcional)",
-            options=[ft.dropdown.Option(text="Carregando...", disabled=True)],
-        )
-        
+        # --- (FIM DA ATUALIZAÇÃO v1.6) ---
+
+        # --- Modais (Sem alteração) ---
+        self.modal_txt_numero_nc = ft.TextField(label="Número da NC (6 dígitos)", prefix_text="2025NC", input_filter=ft.InputFilter(r"[0-9]"), max_length=6, keyboard_type=ft.KeyboardType.NUMBER)
+        self.modal_dd_secao = ft.Dropdown(label="Seção (Opcional)", options=[ft.dropdown.Option(text="Carregando...", disabled=True)],)
         self.modal_txt_data_recebimento = ft.TextField(label="Data Recebimento", hint_text="AAAA-MM-DD", read_only=True, expand=True)
-        self.btn_abrir_data_recebimento = ft.IconButton(
-            icon="CALENDAR_MONTH", 
-            tooltip="Selecionar Data Recebimento", 
-            on_click=lambda e: self.open_datepicker(self.date_picker_recebimento)
-        )
+        self.btn_abrir_data_recebimento = ft.IconButton(icon="CALENDAR_MONTH", tooltip="Selecionar Data Recebimento", on_click=lambda e: self.open_datepicker(self.date_picker_recebimento))
         self.modal_txt_data_validade = ft.TextField(label="Prazo Empenho", hint_text="AAAA-MM-DD", read_only=True, expand=True)
-        self.btn_abrir_data_validade = ft.IconButton(
-            icon="CALENDAR_MONTH", 
-            tooltip="Selecionar Prazo Empenho", 
-            on_click=lambda e: self.open_datepicker(self.date_picker_validade)
-        )
-        self.date_picker_recebimento = ft.DatePicker(
-            on_change=self.handle_date_recebimento_change,
-            first_date=datetime(2020, 1, 1),
-            last_date=datetime(2030, 12, 31)
-        )
-        self.date_picker_validade = ft.DatePicker(
-            on_change=self.handle_date_validade_change,
-            first_date=datetime(2020, 1, 1),
-            last_date=datetime(2030, 12, 31)
-        )
-        
-        self.modal_txt_valor_inicial = ft.TextField(
-            label="Valor Inicial", 
-            prefix="R$", 
-            on_change=self.format_currency_input, 
-            keyboard_type=ft.KeyboardType.NUMBER   
-        )
-        
+        self.btn_abrir_data_validade = ft.IconButton(icon="CALENDAR_MONTH", tooltip="Selecionar Prazo Empenho", on_click=lambda e: self.open_datepicker(self.date_picker_validade))
+        self.date_picker_recebimento = ft.DatePicker(on_change=self.handle_date_recebimento_change, first_date=datetime(2020, 1, 1), last_date=datetime(2030, 12, 31))
+        self.date_picker_validade = ft.DatePicker(on_change=self.handle_date_validade_change, first_date=datetime(2020, 1, 1), last_date=datetime(2030, 12, 31))
+        self.modal_txt_valor_inicial = ft.TextField(label="Valor Inicial", prefix="R$", on_change=self.format_currency_input, keyboard_type=ft.KeyboardType.NUMBER)
         self.modal_txt_ptres = ft.TextField(label="PTRES", width=150)
         self.modal_txt_nd = ft.TextField(label="Natureza Despesa (ND)", width=150)
         self.modal_txt_fonte = ft.TextField(label="Fonte", width=150)
         self.modal_txt_pi = ft.TextField(label="PI", width=150)
         self.modal_txt_ug_gestora = ft.TextField(label="UG Gestora", width=150)
-        self.modal_txt_observacao = ft.TextField(
-            label="Observação (Opcional)", 
-            multiline=True, 
-            min_lines=3, 
-            max_lines=5
-        )
-        
+        self.modal_txt_observacao = ft.TextField(label="Observação (Opcional)", multiline=True, min_lines=3, max_lines=5)
         self.history_modal_title = ft.Text("Extrato da NC")
         self.history_nes_list = ft.Column(scroll=ft.ScrollMode.ADAPTIVE, height=150)
         self.history_recolhimentos_list = ft.Column(scroll=ft.ScrollMode.ADAPTIVE, height=150)
-        
         self.recolhimento_modal_title = ft.Text("Recolher Saldo da NC")
         self.modal_rec_data = ft.TextField(label="Data do Recolhimento", hint_text="AAAA-MM-DD", autofocus=True)
-        
-        self.modal_rec_valor = ft.TextField(
-            label="Valor Recolhido", 
-            prefix="R$", 
-            on_change=self.format_currency_input, 
-            keyboard_type=ft.KeyboardType.NUMBER   
-        )
-        
+        self.modal_rec_valor = ft.TextField(label="Valor Recolhido", prefix="R$", on_change=self.format_currency_input, keyboard_type=ft.KeyboardType.NUMBER)
         self.modal_rec_descricao = ft.TextField(label="Descrição (Opcional)")
-
         self.modal_form_loading_ring = ft.ProgressRing(visible=False, width=24, height=24)
         self.modal_form_btn_cancelar = ft.TextButton("Cancelar", on_click=self.close_modal)
         self.modal_form_btn_salvar = ft.ElevatedButton("Salvar", on_click=self.save_nc, icon="SAVE")
-        
         self.modal_rec_loading_ring = ft.ProgressRing(visible=False, width=24, height=24)
         self.modal_rec_btn_cancelar = ft.TextButton("Cancelar", on_click=self.close_recolhimento_modal)
         self.modal_rec_btn_salvar = ft.ElevatedButton("Confirmar Recolhimento", on_click=self.save_recolhimento, icon="KEYBOARD_RETURN")
+        self.modal_form = ft.AlertDialog(modal=True, title=ft.Text("Adicionar Nova Nota de Crédito"), content=ft.Column([self.modal_txt_numero_nc, self.modal_dd_secao, ft.Row([self.modal_txt_data_recebimento, self.btn_abrir_data_recebimento,], spacing=10), ft.Row([self.modal_txt_data_validade, self.btn_abrir_data_validade,], spacing=10), self.modal_txt_valor_inicial, ft.Row([self.modal_txt_ptres, self.modal_txt_nd, self.modal_txt_fonte]), ft.Row([self.modal_txt_pi, self.modal_txt_ug_gestora]), self.modal_txt_observacao,], height=600, width=500, scroll=ft.ScrollMode.ADAPTIVE,), actions=[self.modal_form_loading_ring, self.modal_form_btn_cancelar, self.modal_form_btn_salvar,], actions_alignment=ft.MainAxisAlignment.END,)
+        self.history_modal = ft.AlertDialog(modal=True, title=self.history_modal_title, content=ft.Column([ft.Text("Notas de Empenho (NEs) Vinculadas:", weight=ft.FontWeight.BOLD), ft.Container(content=self.history_nes_list, border=ft.border.all(1, "grey300"), border_radius=5, padding=10), ft.Divider(height=10), ft.Text("Recolhimentos de Saldo Vinculados:", weight=ft.FontWeight.BOLD), ft.Container(content=self.history_recolhimentos_list, border=ft.border.all(1, "grey300"), border_radius=5, padding=10),], height=400, width=600,), actions=[ft.TextButton("Fechar", on_click=self.close_history_modal)], actions_alignment=ft.MainAxisAlignment.END,)
+        self.recolhimento_modal = ft.AlertDialog(modal=True, title=self.recolhimento_modal_title, content=ft.Column([self.modal_rec_data, self.modal_rec_valor, self.modal_rec_descricao,], height=250, width=400,), actions=[self.modal_rec_loading_ring, self.modal_rec_btn_cancelar, self.modal_rec_btn_salvar,], actions_alignment=ft.MainAxisAlignment.END,)
+        self.confirm_delete_nc_dialog = ft.AlertDialog(modal=True, title=ft.Text("Confirmar Exclusão de Nota de Crédito"), content=ft.Text("Atenção!\nTem a certeza de que deseja excluir esta Nota de Crédito?\nTodas as Notas de Empenho e Recolhimentos vinculados também serão excluídos.\nEsta ação não pode ser desfeita."), actions=[ft.TextButton("Cancelar", on_click=lambda e: self.close_confirm_delete_nc(None)), ft.ElevatedButton("Excluir NC", color="white", bgcolor="red", on_click=self.confirm_delete_nc),], actions_alignment=ft.MainAxisAlignment.END,)
 
-        self.modal_form = ft.AlertDialog(
-            modal=True, title=ft.Text("Adicionar Nova Nota de Crédito"),
-            content=ft.Column(
-                [
-                    self.modal_txt_numero_nc,
-                    self.modal_dd_secao,
-                    ft.Row(
-                        [
-                            self.modal_txt_data_recebimento, 
-                            self.btn_abrir_data_recebimento,
-                        ], 
-                        spacing=10
-                    ),
-                    ft.Row(
-                        [
-                            self.modal_txt_data_validade,
-                            self.btn_abrir_data_validade,
-                        ],
-                        spacing=10
-                    ),
-                    self.modal_txt_valor_inicial,
-                    ft.Row([self.modal_txt_ptres, self.modal_txt_nd, self.modal_txt_fonte]),
-                    ft.Row([self.modal_txt_pi, self.modal_txt_ug_gestora]),
-                    self.modal_txt_observacao,
-                ], 
-                height=600, 
-                width=500, 
-                scroll=ft.ScrollMode.ADAPTIVE,
-            ),
-            actions=[
-                self.modal_form_loading_ring,
-                self.modal_form_btn_cancelar,
-                self.modal_form_btn_salvar,
-            ], actions_alignment=ft.MainAxisAlignment.END,
-        )
-        
-        self.history_modal = ft.AlertDialog(
-            modal=True, title=self.history_modal_title,
-            content=ft.Column(
-                [
-                    ft.Text("Notas de Empenho (NEs) Vinculadas:", weight=ft.FontWeight.BOLD),
-                    ft.Container(content=self.history_nes_list, border=ft.border.all(1, "grey300"), border_radius=5, padding=10),
-                    ft.Divider(height=10),
-                    ft.Text("Recolhimentos de Saldo Vinculados:", weight=ft.FontWeight.BOLD),
-                    ft.Container(content=self.history_recolhimentos_list, border=ft.border.all(1, "grey300"), border_radius=5, padding=10),
-                ], height=400, width=600,
-            ),
-            actions=[ft.TextButton("Fechar", on_click=self.close_history_modal)], actions_alignment=ft.MainAxisAlignment.END,
-        )
-        
-        self.recolhimento_modal = ft.AlertDialog(
-            modal=True, title=self.recolhimento_modal_title,
-            content=ft.Column(
-                [
-                    self.modal_rec_data,
-                    self.modal_rec_valor,
-                    self.modal_rec_descricao,
-                ], height=250, width=400,
-            ),
-            actions=[
-                self.modal_rec_loading_ring,
-                self.modal_rec_btn_cancelar,
-                self.modal_rec_btn_salvar,
-            ], actions_alignment=ft.MainAxisAlignment.END,
-        )
-        
-        self.confirm_delete_nc_dialog = ft.AlertDialog(
-            modal=True,
-            title=ft.Text("Confirmar Exclusão de Nota de Crédito"),
-            content=ft.Text("Atenção!\nTem a certeza de que deseja excluir esta Nota de Crédito?\nTodas as Notas de Empenho e Recolhimentos vinculados também serão excluídos.\nEsta ação não pode ser desfeita."),
-            actions=[
-                ft.TextButton("Cancelar", on_click=lambda e: self.close_confirm_delete_nc(None)),
-                ft.ElevatedButton("Excluir NC", color="white", bgcolor="red", on_click=self.confirm_delete_nc),
-            ],
-            actions_alignment=ft.MainAxisAlignment.END,
-        )
-
+        # --- Filtros (Sem alteração) ---
         self.filtro_pesquisa_nc = ft.TextField(label="Pesquisar por Nº NC", hint_text="Digite parte do número...", expand=True, on_submit=self.load_ncs_data_wrapper)
         self.filtro_pi = ft.Dropdown(label="Filtrar por PI", options=[ft.dropdown.Option(text="Carregando...", disabled=True)], expand=True, on_change=self.on_pi_filter_change)
         self.filtro_nd = ft.Dropdown(label="Filtrar por ND", options=[ft.dropdown.Option(text="Carregando...", disabled=True)], expand=True, on_change=self.load_ncs_data_wrapper)
         self.filtro_status = ft.Dropdown(label="Filtrar por Status", options=[ft.dropdown.Option(text="Ativa", key="Ativa"), ft.dropdown.Option(text="Sem Saldo", key="Sem Saldo"), ft.dropdown.Option(text="Vencida", key="Vencida"), ft.dropdown.Option(text="Cancelada", key="Cancelada"),], width=200, on_change=self.load_ncs_data_wrapper)
         self.btn_limpar_filtros = ft.IconButton(icon="CLEAR_ALL", tooltip="Limpar Filtros", on_click=self.limpar_filtros)
 
+        # --- Layout (v1.5) ---
+        
+        # Card 1: Ações e Filtros
+        card_acoes_e_filtros = ft.Card(
+            elevation=4,
+            content=ft.Container(
+                padding=20,
+                content=ft.Column(
+                    [
+                        ft.Row(
+                            [
+                                ft.Text("Gestão de Notas de Crédito", size=20, weight=ft.FontWeight.W_600),
+                                ft.Row(
+                                    [
+                                        ft.ElevatedButton(
+                                            "Adicionar Nova NC", 
+                                            icon="ADD", 
+                                            on_click=self.open_add_modal
+                                        ),
+                                        ft.OutlinedButton(
+                                            "Importar NC (SIAFI)",
+                                            icon="UPLOAD_FILE",
+                                            tooltip="Adicionar NC a partir de um PDF do SIAFI",
+                                            on_click=self.open_file_picker
+                                        )
+                                    ],
+                                    spacing=10
+                                )
+                            ],
+                            alignment=ft.MainAxisAlignment.SPACE_BETWEEN
+                        ),
+                        
+                        ft.Divider(),
+                        ft.Text("Filtros de Exibição:", weight=ft.FontWeight.BOLD),
+                        ft.Row(
+                            [
+                                self.filtro_pesquisa_nc,
+                                self.filtro_status, 
+                                self.btn_limpar_filtros,
+                                ft.IconButton(
+                                    icon="REFRESH", 
+                                    on_click=self.load_ncs_data_wrapper, 
+                                    tooltip="Recarregar e Aplicar Filtros"
+                                ),
+                                self.progress_ring,
+                            ],
+                            alignment=ft.MainAxisAlignment.START
+                        ),
+                        ft.Row(
+                            [
+                                self.filtro_pi, 
+                                self.filtro_nd
+                            ]
+                        ),
+                    ],
+                    spacing=15
+                )
+            )
+        )
+        
+        # Card 2: Tabela de Dados
+        card_tabela_ncs = ft.Card(
+            elevation=4,
+            expand=True, 
+            content=ft.Container(
+                padding=20,
+                content=ft.Column(
+                    [
+                        ft.Container(
+                            content=self.tabela_ncs,
+                            expand=True
+                        )
+                    ],
+                    expand=True
+                )
+            )
+        )
+
         self.controls = [
-            ft.Row(
-                [
-                    ft.Text("Gestão de Notas de Crédito", size=20, weight=ft.FontWeight.W_600),
-                    ft.Row([
-                        ft.IconButton(icon="REFRESH", on_click=self.load_ncs_data_wrapper, tooltip="Recarregar e Aplicar Filtros"),
-                        self.progress_ring,
-                    ])
-                ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN
-            ),
-            
-            ft.Row(
-                [
-                    ft.ElevatedButton(
-                        "Adicionar Nova NC", 
-                        icon="ADD", 
-                        on_click=self.open_add_modal
-                    ),
-                    ft.OutlinedButton(
-                        "Importar NC (SIAFI)",
-                        icon="UPLOAD_FILE",
-                        tooltip="Adicionar NC a partir de um PDF do SIAFI",
-                        on_click=self.open_file_picker
-                    )
-                ],
-                spacing=20
-            ),
-            
-            ft.Row([ self.filtro_pesquisa_nc, self.filtro_status, self.btn_limpar_filtros ]),
-            ft.Row([ self.filtro_pi, self.filtro_nd ]),
-            ft.Divider(),
-            ft.Container( content=self.tabela_ncs, expand=True )
+            card_acoes_e_filtros,
+            card_tabela_ncs
         ]
 
         self.page.overlay.append(self.modal_form)
         self.page.overlay.append(self.history_modal)
         self.page.overlay.append(self.recolhimento_modal)
         self.page.overlay.append(self.confirm_delete_nc_dialog)
+        self.page.overlay.append(self.quick_view_modal) # (v1.5) Adiciona o novo modal
         self.page.overlay.append(self.file_picker_import) 
         self.page.overlay.append(self.date_picker_recebimento) 
         self.page.overlay.append(self.date_picker_validade)   
@@ -276,27 +242,68 @@ class NcsView(ft.Column):
         self.on_mount = self.on_view_mount
         
     def on_view_mount(self, e):
-        """Chamado pelo Flet DEPOIS que o controlo é adicionado à página."""
         print("NcsView: Controlo montado. A carregar dados...")
-        self.load_secoes_cache() # (NOVO - Ponto 5) Carrega o cache primeiro
+        self.load_secoes_cache() 
         self.load_filter_options()
         self.load_ncs_data()
         
-    # -----------------------------------------------------------------
-    # INÍCIO DO BLOCO DE MÉTODOS (Tudo indentado dentro da classe)
-    # -----------------------------------------------------------------
+    # --- (INÍCIO DA ATUALIZAÇÃO v1.6) ---
+    def open_quick_view_modal(self, e, nc_obj):
+        """Abre o modal de 'Quick View' com os dados completos da NC."""
+        
+        # Calcula o percentual
+        valor_ini = float(nc_obj.get('valor_inicial', 0))
+        total_emp = float(nc_obj.get('total_empenhado', 0)) 
+        if valor_ini > 0:
+            percentual_str = f"{(total_emp / valor_ini) * 100:.1f}%"
+        else:
+            percentual_str = "N/A"
+            
+        # Formata dados
+        data_val_str = datetime.fromisoformat(nc_obj['data_validade_empenho']).strftime('%d/%m/%Y')
+        data_rec_str = datetime.fromisoformat(nc_obj['data_recebimento']).strftime('%d/%m/%Y')
+        
+        # Busca nome da Seção
+        secao_id = nc_obj.get('id_secao')
+        secao_nome = self.secoes_cache.get(secao_id, "N/A") # Get name from cache
+        
+        # Preenche os controlos do modal
+        self.quick_view_title.value = f"Detalhes: {nc_obj.get('numero_nc')}"
+        self.qv_status.value = f"Status: {nc_obj.get('status_calculado')}"
+        
+        # Info Orçamentária
+        self.qv_pi_nd.value = f"PI: {nc_obj.get('pi', 'N/A')}  |  ND: {nc_obj.get('natureza_despesa', 'N/A')}"
+        self.qv_ptres_fonte.value = f"PTRES: {nc_obj.get('ptres', 'N/A')}  |  Fonte: {nc_obj.get('fonte', 'N/A')}"
+        self.qv_ug_secao.value = f"UG Gestora: {nc_obj.get('ug_gestora', 'N/A')}  |  Seção: {secao_nome}"
+        
+        # Valores
+        self.qv_valor_inicial.value = f"Valor Inicial: {self.formatar_moeda(nc_obj.get('valor_inicial'))}"
+        self.qv_saldo.value = f"Saldo Disponível: {self.formatar_moeda(nc_obj.get('saldo_disponivel'))}"
+        self.qv_percent_empenhado.value = f"% Empenhado: {percentual_str}"
+        
+        # Prazos
+        self.qv_prazo.value = f"Prazo Empenho: {data_val_str} (Recebido em: {data_rec_str})"
+        
+        # Observação
+        self.qv_observacao.value = nc_obj.get('observacao') or "Nenhuma observação."
+        
+        self.quick_view_modal.open = True
+        self.quick_view_modal.update()
+    # --- (FIM DA ATUALIZAÇÃO v1.6) ---
 
+    def close_quick_view_modal(self, e):
+        self.quick_view_modal.open = False
+        self.page.update()
+        
     def show_error(self, message):
-        """Exibe o modal de erro global."""
         if self.error_modal:
             self.error_modal.show(message)
         else:
             print(f"ERRO CRÍTICO (Modal não encontrado): {message}")
             
     def handle_db_error(self, ex, context=""):
-        """Traduz erros comuns do Supabase/PostgREST para mensagens amigáveis."""
         msg = str(ex)
-        print(f"Erro de DB Bruto ({context}): {msg}") # Manter no log
+        print(f"Erro de DB Bruto ({context}): {msg}") 
         
         if "duplicate key value violates unique constraint" in msg and "notas_de_credito_numero_nc_key" in msg:
             self.show_error("Erro: Já existe uma Nota de Crédito com este número (2025NC...).")
@@ -308,7 +315,6 @@ class NcsView(ft.Column):
             self.show_error(f"Erro inesperado ao {context}: {msg}")
 
     def show_success_snackbar(self, message):
-        """Mostra uma mensagem de sucesso (verde)."""
         self.page.snack_bar = ft.SnackBar(ft.Text(message), bgcolor="green")
         self.page.snack_bar.open = True
         self.page.update()
@@ -328,7 +334,6 @@ class NcsView(ft.Column):
             return "0,00"
             
     def format_currency_input(self, e: ft.ControlEvent):
-        """Formata o valor monetário_automaticamente ao digitar."""
         try:
             current_value = e.control.value or ""
             digits = "".join(filter(str.isdigit, current_value))
@@ -370,11 +375,7 @@ class NcsView(ft.Column):
         e.control.open = False
         self.modal_txt_data_validade.update()
 
-    # --- INÍCIO DA CORREÇÃO DE IMPORTAÇÃO DE PDF ---
     def open_file_picker(self, e):
-        """
-        Garante que o FilePicker está no overlay ANTES de o chamar.
-        """
         try:
             if self.file_picker_import and self.page:
                 if self.file_picker_import not in self.page.overlay:
@@ -382,7 +383,6 @@ class NcsView(ft.Column):
                     self.page.overlay.append(self.file_picker_import)
                     self.page.update() 
                 
-                # Apenas chama pick_files. O on_result tratará do upload.
                 self.file_picker_import.pick_files(
                     allow_multiple=False,
                     allowed_extensions=["pdf"]
@@ -396,12 +396,8 @@ class NcsView(ft.Column):
             print(f"Erro em open_file_picker: {ex}")
             traceback.print_exc()
             self.show_error(f"Erro ao tentar abrir diálogo: {ex}")
-    # --- FIM DA CORREÇÃO DE IMPORTAÇÃO DE PDF ---
-
-    # --- (NOVO - Ponto 5) Funções de Seção ---
     
     def load_secoes_cache(self):
-        """Carrega o cache de ID/Nome das seções para a tabela."""
         print("NcsView: A carregar cache de seções...")
         try:
             resposta = supabase.table('secoes').select('id, nome').execute()
@@ -414,14 +410,13 @@ class NcsView(ft.Column):
             self.handle_db_error(ex, "carregar cache de seções")
             
     def load_secoes_para_dropdown(self):
-        """Carrega as seções (do cache) para o Dropdown do modal."""
         try:
             self.modal_dd_secao.options.clear()
             self.modal_dd_secao.options.append(ft.dropdown.Option(text="Nenhuma", key=None))
             
             if not self.secoes_cache:
                 print("NcsView: Cache de seções vazio, a recarregar...")
-                self.load_secoes_cache() # Tenta carregar de novo
+                self.load_secoes_cache() 
 
             for secao_id, secao_nome in self.secoes_cache.items():
                 self.modal_dd_secao.options.append(
@@ -433,8 +428,6 @@ class NcsView(ft.Column):
             print(f"Erro ao carregar seções no dropdown: {ex}")
             self.show_error(f"Erro ao carregar seções: {ex}")
             
-    # --- Fim (Ponto 5) ---
-        
     def load_filter_options(self, pi_selecionado=None):
         try:
             if pi_selecionado is None:
@@ -503,6 +496,7 @@ class NcsView(ft.Column):
         self.page.update()
         
         try:
+            # (v1.6) Busca todos os dados para o modal de Quick View
             query = supabase.table('ncs_com_saldos').select(
                 'id, numero_nc, pi, natureza_despesa, status_calculado, '
                 'valor_inicial, saldo_disponivel, total_empenhado, id_secao, ' 
@@ -523,42 +517,51 @@ class NcsView(ft.Column):
             self.tabela_ncs.rows.clear()
             if resposta.data:
                 for nc in resposta.data:
-                    data_val = datetime.fromisoformat(nc['data_validade_empenho']).strftime('%d/%m/%Y')
-                    
-                    obs_texto = nc.get('observacao', '')
-                    obs_curta = (obs_texto[:30] + '...') if len(obs_texto) > 30 else obs_texto
-                    
-                    valor_ini = float(nc.get('valor_inicial', 0))
-                    total_emp = float(nc.get('total_empenhado', 0)) 
-                    
-                    if valor_ini > 0:
-                        percentual = (total_emp / valor_ini) * 100
-                        percentual_str = f"{percentual:.1f}%"
-                    else:
-                        percentual_str = "N/A"
-                    
-                    secao_id = nc.get('id_secao')
-                    secao_nome = self.secoes_cache.get(secao_id, "N/A") 
                     
                     self.tabela_ncs.rows.append(
                         ft.DataRow(
                             cells=[
-                                ft.DataCell(ft.Text(nc.get('numero_nc', ''))),
-                                ft.DataCell(ft.Text(nc.get('pi', ''))),
-                                ft.DataCell(ft.Text(secao_nome)), 
-                                ft.DataCell(ft.Text(nc.get('status_calculado', ''))),
-                                ft.DataCell(ft.Text(self.formatar_moeda(valor_ini))),
-                                ft.DataCell(ft.Text(self.formatar_moeda(nc.get('saldo_disponivel')), weight=ft.FontWeight.BOLD)),
-                                ft.DataCell(ft.Text(percentual_str)),
-                                ft.DataCell(ft.Text(data_val)),
-                                ft.DataCell(ft.Text(obs_curta, tooltip=obs_texto)),
+                                # (v1.6) Nº NC como "botão" clicável
                                 ft.DataCell(
-                                    ft.Row([
-                                        ft.IconButton(icon="HISTORY", tooltip="Ver Extrato", on_click=lambda e, nc_obj=nc: self.open_history_modal(nc_obj)),
-                                        ft.IconButton(icon="EDIT", tooltip="Editar NC", icon_color="blue700", on_click=lambda e, nc_obj=nc: self.open_edit_modal(nc_obj)),
-                                        ft.IconButton(icon="KEYBOARD_RETURN", tooltip="Recolher Saldo", icon_color="orange700", on_click=lambda e, nc_obj=nc: self.open_recolhimento_modal(nc_obj)),
-                                        ft.IconButton(icon="DELETE", tooltip="Excluir NC", icon_color="red700", on_click=lambda e, nc_obj=nc: self.open_confirm_delete_nc(nc_obj)),
-                                    ])
+                                    ft.TextButton(
+                                        text=nc.get('numero_nc', ''),
+                                        on_click=lambda e, nc_obj=nc: self.open_quick_view_modal(e, nc_obj),
+                                        style=ft.ButtonStyle(padding=0)
+                                    )
+                                ),
+                                # (v1.6) Colunas essenciais
+                                ft.DataCell(ft.Text(nc.get('pi', ''))),
+                                ft.DataCell(ft.Text(nc.get('natureza_despesa', ''))),
+                                ft.DataCell(ft.Text(self.formatar_moeda(nc.get('valor_inicial')))),
+                                ft.DataCell(ft.Text(self.formatar_moeda(nc.get('saldo_disponivel')), weight=ft.FontWeight.BOLD)),
+                                # (v1.6) Ações
+                                ft.DataCell(
+                                    ft.PopupMenuButton(
+                                        icon="MORE_VERT", 
+                                        items=[
+                                            ft.PopupMenuItem(
+                                                text="Editar NC (Detalhes)",
+                                                icon="EDIT",
+                                                on_click=lambda e, nc_obj=nc: self.open_edit_modal(nc_obj)
+                                            ),
+                                            ft.PopupMenuItem(
+                                                text="Ver Extrato (NEs)",
+                                                icon="HISTORY",
+                                                on_click=lambda e, nc_obj=nc: self.open_history_modal(nc_obj)
+                                            ),
+                                            ft.PopupMenuItem(
+                                                text="Recolher Saldo",
+                                                icon="KEYBOARD_RETURN",
+                                                on_click=lambda e, nc_obj=nc: self.open_recolhimento_modal(nc_obj)
+                                            ),
+                                            ft.PopupMenuItem(), # Divisor
+                                            ft.PopupMenuItem(
+                                                text="Excluir NC",
+                                                icon="DELETE",
+                                                on_click=lambda e, nc_obj=nc: self.open_confirm_delete_nc(nc_obj)
+                                            ),
+                                        ]
+                                    )
                                 ),
                             ]
                         )
@@ -569,9 +572,7 @@ class NcsView(ft.Column):
                         ft.DataCell(ft.Text("Nenhuma Nota de Crédito encontrada com estes filtros.", italic=True)), 
                         ft.DataCell(ft.Text("")), ft.DataCell(ft.Text("")), 
                         ft.DataCell(ft.Text("")), ft.DataCell(ft.Text("")),
-                        ft.DataCell(ft.Text("")), ft.DataCell(ft.Text("")),
-                        ft.DataCell(ft.Text("")), ft.DataCell(ft.Text("")),
-                        ft.DataCell(ft.Text("")), 
+                        ft.DataCell(ft.Text("")),
                     ])
                 )
             print("NCs: Dados carregados com sucesso.")
@@ -619,28 +620,28 @@ class NcsView(ft.Column):
         self.page.update()
         self.modal_txt_numero_nc.focus() 
 
-    def open_edit_modal(self, nc):
-        print(f"A abrir modal de EDIÇÃO para: {nc['numero_nc']}")
-        self.id_sendo_editado = nc['id'] 
-        self.modal_form.title = ft.Text(f"Editar NC: {nc['numero_nc']}")
+    def open_edit_modal(self, nc_completa):
+        print(f"A abrir modal de EDIÇÃO para: {nc_completa['numero_nc']}")
+        self.id_sendo_editado = nc_completa['id'] 
+        self.modal_form.title = ft.Text(f"Editar NC: {nc_completa['numero_nc']}")
         self.modal_form_btn_salvar.text = "Atualizar"
         self.modal_form_btn_salvar.icon = "UPDATE"
         
         self.load_secoes_para_dropdown()
 
-        numero_nc_sem_prefixo = nc.get('numero_nc', '').upper().replace("2025NC", "")
+        numero_nc_sem_prefixo = nc_completa.get('numero_nc', '').upper().replace("2025NC", "")
         self.modal_txt_numero_nc.value = numero_nc_sem_prefixo
         
-        self.modal_txt_data_recebimento.value = nc.get('data_recebimento', '')
-        self.modal_txt_data_validade.value = nc.get('data_validade_empenho', '')
-        self.modal_txt_valor_inicial.value = self.formatar_valor_para_campo(nc.get('valor_inicial'))
-        self.modal_txt_ptres.value = nc.get('ptres', '')
-        self.modal_txt_nd.value = nc.get('natureza_despesa', '')
-        self.modal_txt_fonte.value = nc.get('fonte', '')
-        self.modal_txt_pi.value = nc.get('pi', '')
-        self.modal_txt_ug_gestora.value = nc.get('ug_gestora', '')
-        self.modal_txt_observacao.value = nc.get('observacao', '')
-        self.modal_dd_secao.value = nc.get('id_secao') 
+        self.modal_txt_data_recebimento.value = nc_completa.get('data_recebimento', '')
+        self.modal_txt_data_validade.value = nc_completa.get('data_validade_empenho', '')
+        self.modal_txt_valor_inicial.value = self.formatar_valor_para_campo(nc_completa.get('valor_inicial'))
+        self.modal_txt_ptres.value = nc_completa.get('ptres', '')
+        self.modal_txt_nd.value = nc_completa.get('natureza_despesa', '')
+        self.modal_txt_fonte.value = nc_completa.get('fonte', '')
+        self.modal_txt_pi.value = nc_completa.get('pi', '')
+        self.modal_txt_ug_gestora.value = nc_completa.get('ug_gestora', '')
+        self.modal_txt_observacao.value = nc_completa.get('observacao', '')
+        self.modal_dd_secao.value = nc_completa.get('id_secao') 
         
         for campo in [self.modal_txt_numero_nc, self.modal_txt_data_recebimento, self.modal_txt_data_validade,
                       self.modal_txt_valor_inicial, self.modal_txt_ptres, self.modal_txt_nd,
@@ -657,8 +658,6 @@ class NcsView(ft.Column):
         self.page.update()
 
     def save_nc(self, e):
-        """ Salva (INSERT) ou Atualiza (UPDATE) uma NC (V17.7). """
-        
         try:
             print("A validar dados da NC...")
             campos_obrigatorios = [
@@ -916,37 +915,26 @@ class NcsView(ft.Column):
             self.handle_db_error(ex, "excluir NC")
             self.close_confirm_delete_nc(None)
             
-    # --- FUNÇÕES DE IMPORTAÇÃO DE PDF (CORRIGIDAS PARA WEB v0.28.3) ---
-
     def on_file_picker_result(self, e: ft.FilePickerResultEvent):
-        """
-        Passo 2: O utilizador selecionou um ficheiro.
-        Agora obtemos uma URL de upload e chamamos file_picker.upload().
-        """
         if not e.files:
             print("on_file_picker_result: O utilizador cancelou.")
             return
 
-        # 1. Obter o nome do ficheiro
         file_name = e.files[0].name
         print(f"on_file_picker_result: Ficheiro selecionado: {file_name}")
 
         try:
-            # 2. Pedir uma URL de upload ao Flet
-            # Esta URL aponta para a pasta 'uploads' no servidor
-            upload_url = self.page.get_upload_url(file_name, 60) # Expira em 60s
+            upload_url = self.page.get_upload_url(file_name, 60) 
             print(f"on_file_picker_result: URL de upload obtida: {upload_url}")
 
-            # 3. Criar a lista de ficheiros para upload
             upload_list = [
                 ft.FilePickerUploadFile(
                     file_name,
                     upload_url,
-                    method="PUT" # <-- CORRIGIDO DE "POST" PARA "PUT"
+                    method="PUT" 
                 )
             ]
 
-            # 4. Iniciar o upload
             self.progress_ring.visible = True
             self.page.update()
             print("on_file_picker_result: A iniciar upload...")
@@ -960,9 +948,6 @@ class NcsView(ft.Column):
             self.page.update()
 
     def on_upload_progress(self, e: ft.FilePickerUploadEvent):
-        """
-        Passo 3: Chamado pelo Flet quando o upload está completo (ou falha).
-        """
         if e.error:
             print(f"on_upload_progress: ERRO: {e.error}")
             self.show_error(f"Erro durante o upload: {e.error}")
@@ -971,26 +956,21 @@ class NcsView(ft.Column):
             return
         
         if e.progress < 1.0:
-            # Opcional: pode atualizar uma barra de progresso aqui
-            # print(f"Progresso: {e.progress * 100}%")
             return
 
         print("on_upload_progress: Upload 100% concluído.")
         
-        # O ficheiro está agora no servidor, na pasta 'uploads'
         file_name = e.file_name
         file_path_no_servidor = os.path.join("uploads", file_name)
         
         print(f"on_upload_progress: A processar ficheiro em: {file_path_no_servidor}")
         
         try:
-            # Verificamos se o ficheiro realmente existe
             if not os.path.exists(file_path_no_servidor):
                 print(f"Erro: O caminho '{file_path_no_servidor}' não existe no servidor.")
                 self.show_error(f"Erro: Ficheiro não encontrado no servidor após upload.")
                 return
 
-            # Passamos o caminho do servidor DIRETAMENTE para o pdfplumber
             dados_extraidos = self._parse_siafi_pdf(file_path_no_servidor) 
             
             if dados_extraidos:
@@ -1007,19 +987,10 @@ class NcsView(ft.Column):
         finally: 
             self.progress_ring.visible = False
             self.page.update()
-            # Opcional: Limpar o ficheiro temporário do servidor
-            # try:
-            #     if os.path.exists(file_path_no_servidor):
-            #         os.remove(file_path_no_servidor)
-            #         print(f"Ficheiro temporário '{file_path_no_servidor}' removido.")
-            # except Exception as ex_clean:
-            #     print(f"Aviso: Não foi possível remover o ficheiro temporário: {ex_clean}")
 
-
-    def _parse_siafi_pdf(self, file_path_or_object): # O nome agora é genérico
+    def _parse_siafi_pdf(self, file_path_or_object): 
         texto_completo = ""
         
-        # pdfplumber.open() aceita um caminho (str) ou um objeto (bytes)
         with pdfplumber.open(file_path_or_object) as pdf:
             primeira_pagina = pdf.pages[0]
             texto_completo = primeira_pagina.extract_text(layout=True, x_tolerance=2)

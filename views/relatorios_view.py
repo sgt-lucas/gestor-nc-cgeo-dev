@@ -1,7 +1,6 @@
 # views/relatorios_view.py
-# (VERSÃO WEB - CORRIGIDA v8.0)
-# (Compatibilidade total com Flet antigo)
-# (Salva em 'assets/' e usa launch_url(url_relativa_sem_barra))
+# (Versão Refatorada v1.3 - Layout Moderno)
+# (Adiciona scroll vertical à aba)
 
 import flet as ft
 from supabase_client import supabase # Cliente 'anon'
@@ -23,7 +22,7 @@ from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_LEFT
 class RelatoriosView(ft.Column):
     """
     Representa o conteúdo da aba Relatórios.
-    (Corrigido v8.0: Usa launch_url(url_relativa) para servir de assets/)
+    (v1.3) Adiciona scroll vertical.
     """
     
     def __init__(self, page, error_modal=None):
@@ -31,13 +30,16 @@ class RelatoriosView(ft.Column):
         self.page = page
         self.alignment = ft.MainAxisAlignment.START
         self.spacing = 20
-        self.padding = 20
         self.error_modal = error_modal
         
+        # --- (CORREÇÃO v1.3) ---
+        # Adiciona o scroll de volta à coluna principal da view
         self.scroll = ft.ScrollMode.ADAPTIVE
+        # --- (FIM DA CORREÇÃO v1.3) ---
         
         self.progress_ring = ft.ProgressRing(visible=False, width=32, height=32)
 
+        # --- Controlos de Download (v8.0 - mantidos) ---
         self.tipo_ficheiro_a_salvar = None 
         self.dados_relatorio_para_salvar = None 
         
@@ -53,8 +55,9 @@ class RelatoriosView(ft.Column):
             visible=False,
             on_click=lambda e: print("Botão de download extrato clicado (URL ainda não definida)")
         )
+        # --- Fim dos controlos de Download ---
 
-        # --- Secção: Relatório Geral NCs ---
+        # --- Secção: Relatório Geral NCs (Controlos) ---
         self.filtro_data_inicio = ft.TextField(label="Data Início (Receb.)", hint_text="AAAA-MM-DD", width=150, tooltip="Data de recebimento inicial", read_only=True)
         self.filtro_data_fim = ft.TextField(label="Data Fim (Receb.)", hint_text="AAAA-MM-DD", width=150, tooltip="Data de recebimento final", read_only=True)
         self.btn_abrir_data_inicio = ft.IconButton(icon="CALENDAR_MONTH", tooltip="Selecionar Data Início", on_click=lambda e: self.open_datepicker(self.date_picker_inicio))
@@ -71,7 +74,7 @@ class RelatoriosView(ft.Column):
         self.btn_gerar_excel_geral = ft.ElevatedButton("Gerar Excel Geral (.xlsx)", icon="TABLE_CHART", on_click=self.gerar_relatorio_geral_excel)
         self.btn_gerar_pdf_geral = ft.ElevatedButton("Gerar PDF Geral (.pdf)", icon="PICTURE_AS_PDF", on_click=self.gerar_relatorio_geral_pdf)
 
-        # --- Secção: Relatório Individual (Extrato) ---
+        # --- Secção: Relatório Individual (Extrato) (Controlos) ---
         self.dropdown_nc_extrato = ft.Dropdown(
             label="Selecione a NC para gerar o Extrato",
             options=[ft.dropdown.Option(text="Carregando...", disabled=True)],
@@ -80,37 +83,66 @@ class RelatoriosView(ft.Column):
         self.btn_gerar_excel_extrato = ft.ElevatedButton("Gerar Extrato Excel", icon="TABLE_CHART", on_click=self.gerar_extrato_excel)
         self.btn_gerar_pdf_extrato = ft.ElevatedButton("Gerar Extrato PDF", icon="PICTURE_AS_PDF", on_click=self.gerar_extrato_pdf)
         
-        self.controls = [
-            ft.Row(
-                [
-                    ft.Text("Relatórios", size=20, weight=ft.FontWeight.W_600),
-                    ft.Row([
-                        ft.IconButton(
-                            icon="REFRESH", 
-                            on_click=self.load_all_filters_wrapper, 
-                            tooltip="Recarregar Listas de Filtros"
+        
+        # --- (INÍCIO DA REFATORAÇÃO VISUAL v1.2) ---
+        
+        # Card 1: Relatório Geral
+        card_relatorio_geral = ft.Card(
+            elevation=4,
+            content=ft.Container(
+                padding=20,
+                content=ft.Column(
+                    [
+                        ft.Row(
+                            [
+                                ft.Text("Relatório Geral de Notas de Crédito", size=20, weight=ft.FontWeight.W_600),
+                                ft.Row([
+                                    ft.IconButton(
+                                        icon="REFRESH", 
+                                        on_click=self.load_all_filters_wrapper, 
+                                        tooltip="Recarregar Listas de Filtros"
+                                    ),
+                                    self.progress_ring,
+                                ])
+                            ],
+                            alignment=ft.MainAxisAlignment.SPACE_BETWEEN
                         ),
-                        self.progress_ring,
-                    ])
-                ],
-                alignment=ft.MainAxisAlignment.SPACE_BETWEEN
-            ),
-            
-            ft.Text("Relatório Geral de Notas de Crédito", size=16, weight=ft.FontWeight.BOLD),
-            ft.Text("Filtros (Relatório Geral):"),
-            ft.Row([ self.filtro_data_inicio, self.btn_abrir_data_inicio, ft.Container(width=20), self.filtro_data_fim, self.btn_abrir_data_fim, ], alignment=ft.MainAxisAlignment.START),
-            ft.Row([self.filtro_pi, self.filtro_nd]),
-            ft.Row([self.filtro_status, self.btn_limpar_filtros_geral], alignment=ft.MainAxisAlignment.START),
-            ft.Row([self.btn_gerar_excel_geral, self.btn_gerar_pdf_geral], alignment=ft.MainAxisAlignment.CENTER),
-            ft.Container(self.download_button_geral, alignment=ft.alignment.center),
-            
-            ft.Divider(height=30, thickness=2), 
+                        ft.Divider(),
+                        ft.Text("Filtros (Relatório Geral):", weight=ft.FontWeight.BOLD),
+                        ft.Row([ self.filtro_data_inicio, self.btn_abrir_data_inicio, ft.Container(width=20), self.filtro_data_fim, self.btn_abrir_data_fim, ], alignment=ft.MainAxisAlignment.START),
+                        ft.Row([self.filtro_pi, self.filtro_nd]),
+                        ft.Row([self.filtro_status, self.btn_limpar_filtros_geral], alignment=ft.MainAxisAlignment.START),
+                        ft.Row([self.btn_gerar_excel_geral, self.btn_gerar_pdf_geral], alignment=ft.MainAxisAlignment.CENTER),
+                        ft.Container(self.download_button_geral, alignment=ft.alignment.center),
+                    ],
+                    spacing=15
+                )
+            )
+        )
+        
+        # Card 2: Relatório Individual
+        card_relatorio_extrato = ft.Card(
+            elevation=4,
+            content=ft.Container(
+                padding=20,
+                content=ft.Column(
+                    [
+                        ft.Text("Relatório Individual (Extrato) por NC", size=20, weight=ft.FontWeight.W_600),
+                        ft.Divider(),
+                        ft.Row([self.dropdown_nc_extrato]),
+                        ft.Row([self.btn_gerar_excel_extrato, self.btn_gerar_pdf_extrato], alignment=ft.MainAxisAlignment.CENTER),
+                        ft.Container(self.download_button_extrato, alignment=ft.alignment.center),
+                    ],
+                    spacing=15
+                )
+            )
+        )
 
-            ft.Text("Relatório Individual (Extrato) por NC", size=16, weight=ft.FontWeight.BOLD),
-            ft.Row([self.dropdown_nc_extrato]),
-            ft.Row([self.btn_gerar_excel_extrato, self.btn_gerar_pdf_extrato], alignment=ft.MainAxisAlignment.CENTER),
-            ft.Container(self.download_button_extrato, alignment=ft.alignment.center),
+        self.controls = [
+            card_relatorio_geral,
+            card_relatorio_extrato
         ]
+        # --- (FIM DA REFATORAÇÃO VISUAL v1.2) ---
 
         if self.page:
             self.page.overlay.extend([
@@ -119,6 +151,11 @@ class RelatoriosView(ft.Column):
             ])
 
         self.on_mount = self.on_view_mount
+        
+    # -----------------------------------------------------------------
+    # O RESTANTE DO FICHEIRO (todas as funções de lógica v8.0)
+    # permanece EXATAMENTE IGUAL.
+    # -----------------------------------------------------------------
         
     def on_view_mount(self, e):
         print("RelatoriosView: Controlo montado. A carregar dados...")
@@ -308,13 +345,9 @@ class RelatoriosView(ft.Column):
             self.handle_db_error(ex, "carregar lista de NCs")
             
     
-    # --- (INÍCIO DA REESCRITA v8.0 - LÓGICA DE DOWNLOAD) ---
+    # --- LÓGICA DE DOWNLOAD (v8.0 - Mantida) ---
     
     def _executar_download(self, tipo_relatorio, nome_base, dados_para_gerar, button_control_to_update):
-        """
-        Função unificada para gerar, salvar em 'assets/' e exibir o botão de download.
-        (Compatível com Flet antigo)
-        """
         self.progress_ring.visible = True
         button_control_to_update.visible = False 
         self.update()
@@ -336,16 +369,10 @@ class RelatoriosView(ft.Column):
             with open(caminho_servidor, "wb") as f:
                 f.write(file_bytes)
                 
-            # --- (CORREÇÃO v8.0) ---
-            # A URL para um arquivo em 'assets/' NÃO deve ter a barra inicial.
-            url_download = nome_unico
-            # --- (FIM DA CORREÇÃO v8.0) ---
+            url_download = nome_unico # URL relativa para 'assets/'
             
             button_control_to_update.text = f"Baixar: {nome_unico}"
-            
-            # Remove o argumento 'download=True' para compatibilidade
             button_control_to_update.on_click = lambda e, url=url_download: self.page.launch_url(url)
-            
             button_control_to_update.visible = True
             
             self.show_success_snackbar("Relatório pronto. Clique no botão para baixar.")
@@ -418,11 +445,6 @@ class RelatoriosView(ft.Column):
             )
 
     def _gerar_bytes_do_relatorio(self):
-        """
-        Função auxiliar interna para gerar os bytes do arquivo.
-        (Nenhuma alteração aqui, apenas os 'whitesmoke' corrigidos)
-        """
-        
         tipo = self.tipo_ficheiro_a_salvar
         dados = self.dados_relatorio_para_salvar
         

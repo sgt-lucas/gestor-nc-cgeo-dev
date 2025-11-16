@@ -1,36 +1,23 @@
 # main.py
-# (Versão Lote 6 - Pronto para Web)
-# (CORRIGIDO v6: Define FLET_SECRET_KEY via os.environ)
+# (Versão Refatorada v2.1 - Performance)
+# (Corrige o 'AssertionError' ao remover a chamada manual do 'on_mount')
 
 import flet as ft
 import os 
 import traceback 
 
-# --- CORREÇÃO (Definir a variável de ambiente ANTES de ft.app) ---
-# Esta chave é necessária para a função page.get_upload_url()
-# Pode ser qualquer string longa e aleatória.
-os.environ["FLET_SECRET_KEY"] = "adicionar_uma_chave_secreta_longa_e_aleatoria_aqui_12345!"
-# --- FIM DA CORREÇÃO ---
+os.environ["FLET_SECRET_KEY"] = os.environ.get("FLET_SECRET_KEY", "chave_secreta_local_padrao_12345!")
 
-
-# Importa AMBOS os clientes
 from supabase_client import supabase, supabase_admin 
-# Importação correta da biblioteca de auth
 from supabase_auth.errors import AuthApiError 
 
-# Importa as nossas "views" (abas)
 from views.dashboard_view import create_dashboard_view
 from views.ncs_view import create_ncs_view
 from views.nes_view import create_nes_view
 from views.relatorios_view import create_relatorios_view
 from views.admin_view import create_admin_view
 
-# (LOTE 3, Item 11) - Classe de Modal de Erro Reutilizável
 class ErrorModal:
-    """
-    Gestor de Modal de Erro.
-    Substitui o SnackBar para garantir que o utilizador veja o erro.
-    """
     def __init__(self, page: ft.Page):
         self.page = page
         self.dialog = ft.AlertDialog(
@@ -49,19 +36,54 @@ class ErrorModal:
              self.page.overlay.append(self.dialog)
 
     def show(self, error_message):
-        """Mostra o modal de erro com uma mensagem específica."""
         print(f"[Modal de Erro] A ser mostrado: {error_message}")
         self.dialog.content = ft.Text(str(error_message))
         self.dialog.open = True
         self.page.update()
 
     def close(self, e=None):
-        """Fecha o modal de erro."""
         self.dialog.open = False
         self.page.update()
 
-# --- Fim (LOTE 3) ---
+def _load_global_caches(page: ft.Page):
+    """
+    Busca todos os dados de filtro comuns UMA VEZ e armazena na sessão.
+    Chamado no login.
+    """
+    print("A carregar caches globais (PIs, NDs, Seções, NCs)...")
+    try:
+        # 1. Buscar PIs
+        pis_data = supabase.rpc('get_distinct_pis').execute().data
+        page.session.set("cache_pis", pis_data or [])
+        print(f"Cache: {len(pis_data or [])} PIs carregados.")
 
+        # 2. Buscar NDs
+        nds_data = supabase.rpc('get_distinct_nds').execute().data
+        page.session.set("cache_nds", nds_data or [])
+        print(f"Cache: {len(nds_data or [])} NDs carregados.")
+
+        # 3. Buscar Seções (como um mapa/dict para acesso rápido)
+        secoes_resp = supabase.table('secoes').select('id, nome').execute()
+        secoes_map = {}
+        if secoes_resp.data:
+            secoes_map = {secao['id']: secao['nome'] for secao in secoes_resp.data}
+        page.session.set("cache_secoes_map", secoes_map)
+        print(f"Cache: {len(secoes_map)} Seções carregadas.")
+
+        # 4. Buscar Lista de NCs (para filtros de NE)
+        ncs_resp = supabase.table('notas_de_credito').select('id, numero_nc').order('numero_nc').execute()
+        page.session.set("cache_ncs_lista", ncs_resp.data or [])
+        print(f"Cache: {len(ncs_resp.data or [])} NCs carregadas.")
+        
+        print("Caches globais carregados com sucesso.")
+        return True
+        
+    except Exception as e:
+        print(f"--- ERRO CRÍTICO AO CARREGAR CACHES GLOBAIS ---")
+        traceback.print_exc()
+        print("--------------------------------------------------")
+        return e 
+        
 
 def main(page: ft.Page):
     
@@ -69,20 +91,28 @@ def main(page: ft.Page):
     
     page.theme = ft.Theme(
         color_scheme=ft.ColorScheme(
-            primary="green800",
-            primary_container="green900",
+            primary="blue700",
+            primary_container="blue800",
             background="grey100",
-            surface="white",
+            surface="white", 
+        )
+    )
+    page.dark_theme = ft.Theme(
+        color_scheme=ft.ColorScheme(
+            primary="blue300",       
+            primary_container="blue700",
+            background="grey900",    
+            surface="grey800",     
         )
     )
     
+    page.theme_mode = "light"
+
     error_modal_global = ErrorModal(page)
 
-    # --- Campos de Login (Plano B) ---
     username_field = ft.TextField(
         label="Utilizador", 
         prefix_icon="PERSON",
-        width=350,
         hint_text="ex: joao.silva",
         autofocus=True,
         on_submit=lambda e: handle_login(e) 
@@ -90,25 +120,41 @@ def main(page: ft.Page):
     password_field = ft.TextField(
         label="Senha", 
         prefix_icon="LOCK",
-        width=350,
         password=True, 
         can_reveal_password=True,
         on_submit=lambda e: handle_login(e) 
     )
+    
+    def toggle_theme(e):
+        if page.theme_mode == "light":
+            page.theme_mode = "dark"
+            e.control.icon = "DARK_MODE"
+            e.control.tooltip = "Mudar para Modo Escuro"
+        else:
+            page.theme_mode = "light"
+            e.control.icon = "LIGHT_MODE"
+            e.control.tooltip = "Mudar para Modo Claro"
+        page.update()
+
+    theme_toggle_button = ft.IconButton(
+        icon="LIGHT_MODE",
+        tooltip="Mudar para Modo Claro",
+        on_click=toggle_theme,
+        icon_color="white" 
+    )
 
     def show_main_layout(e=None):
-        """ 
-        Constrói a interface principal da aplicação (Abas) após o login.
-        """
         page.clean() 
         page.vertical_alignment = ft.MainAxisAlignment.START 
+        page.padding = 0 
 
         page.appbar = ft.AppBar(
             title=ft.Text("SALC - Sistema de Controle de Notas de Crédito"), 
-            bgcolor="green800",
+            bgcolor="blue700", 
             color="white",
             actions=[
                 ft.Text(f"Utilizador: {page.session.get('user_email')}"),
+                theme_toggle_button, 
                 ft.IconButton(
                     icon="LOGOUT",
                     tooltip="Sair",
@@ -122,58 +168,110 @@ def main(page: ft.Page):
         view_ncs = create_ncs_view(page, error_modal=error_modal_global)
         
         def on_data_changed_master(e):
-            print("Callback Mestre: Recarregando Dashboard e NCs...")
+            print("Callback Mestre: Recarregando caches e views...")
+            
+            try:
+                # Recarrega caches que MUDAM (lista de NCs)
+                ncs_resp = supabase.table('notas_de_credito').select('id, numero_nc').order('numero_nc').execute()
+                page.session.set("cache_ncs_lista", ncs_resp.data or [])
+                
+                # (Opcional) Recarrega PIs/NDs se uma NC/NE puder criar um novo
+                pis_data = supabase.rpc('get_distinct_pis').execute().data
+                page.session.set("cache_pis", pis_data or [])
+                nds_data = supabase.rpc('get_distinct_nds').execute().data
+                page.session.set("cache_nds", nds_data or [])
+                
+                print("Caches voláteis atualizados após alteração.")
+            except Exception as ex:
+                print(f"Erro ao atualizar caches voláteis: {ex}")
+            
+            # Atualiza as views
             if view_dashboard: view_dashboard.load_dashboard_data(None)
             if view_ncs: view_ncs.load_ncs_data()
         
         view_ncs.on_data_changed_callback = on_data_changed_master
         view_nes = create_nes_view(page, on_data_changed=on_data_changed_master, error_modal=error_modal_global)
-        
         view_relatorios = create_relatorios_view(page, error_modal=error_modal_global)
         
-        abas_principais = ft.Tabs(
-            selected_index=0,
-            animation_duration=300,
-            expand=True,
-            tabs=[
-                ft.Tab(
-                    text="Dashboard",
-                    icon="DASHBOARD",
-                    content=view_dashboard
-                ),
-                ft.Tab(
-                    text="Notas de Crédito",
-                    icon="PAYMENT",
-                    content=view_ncs
-                ),
-                ft.Tab(
-                    text="Notas de Empenho",
-                    icon="RECEIPT",
-                    content=view_nes
-                ),
-                ft.Tab(
-                    text="Relatórios",
-                    icon="PRINT",
-                    content=view_relatorios
-                ),
-            ]
-        )
+        all_views = [view_dashboard, view_ncs, view_nes, view_relatorios]
+        
+        navigation_destinations = [
+            ft.NavigationRailDestination(
+                icon="DASHBOARD_OUTLINED",
+                selected_icon="DASHBOARD",
+                label="Dashboard"
+            ),
+            ft.NavigationRailDestination(
+                icon="PAYMENT_OUTLINED",
+                selected_icon="PAYMENT",
+                label="Notas de Crédito"
+            ),
+            ft.NavigationRailDestination(
+                icon="RECEIPT_OUTLINED",
+                selected_icon="RECEIPT",
+                label="Notas de Empenho"
+            ),
+            ft.NavigationRailDestination(
+                icon="PRINT_OUTLINED",
+                selected_icon="PRINT",
+                label="Relatórios"
+            ),
+        ]
         
         if page.session.get("user_funcao") == "admin":
             view_admin = create_admin_view(page, error_modal=error_modal_global)
-            abas_principais.tabs.append(
-                ft.Tab(
-                    text="Administração",
-                    icon="ADMIN_PANEL_SETTINGS",
-                    content=view_admin
+            all_views.append(view_admin)
+            navigation_destinations.append(
+                ft.NavigationRailDestination(
+                    icon="ADMIN_PANEL_SETTINGS_OUTLINED",
+                    selected_icon="ADMIN_PANEL_SETTINGS",
+                    label="Administração"
                 )
             )
 
-        page.add(abas_principais)
+        view_container = ft.Container(
+            content=all_views[0], 
+            expand=True,
+            padding=20, 
+            alignment=ft.alignment.top_left
+        )
+        
+        # --- (INÍCIO DA CORREÇÃO v2.1) ---
+        def switch_view(e):
+            index = e.control.selected_index
+            view_container.content = all_views[index]
+            
+            # REMOVIDA a chamada manual ao on_mount.
+            # O Flet irá chamar o on_mount da view automaticamente
+            # DEPOIS que a linha 'view_container.update()' for executada.
+            # Isto corrige o 'AssertionError'.
+            
+            view_container.update()
+        # --- (FIM DA CORREÇÃO v2.1) ---
+            
+        navigation_rail = ft.NavigationRail(
+            selected_index=0,
+            label_type="all", 
+            min_width=100,
+            min_extended_width=200,
+            group_alignment=-0.9, 
+            destinations=navigation_destinations,
+            on_change=switch_view
+        )
+        
+        page.add(
+            ft.Row(
+                [
+                    navigation_rail,
+                    ft.VerticalDivider(width=1, thickness=1, color="grey300"),
+                    view_container
+                ],
+                expand=True
+            )
+        )
         page.update()
 
     def handle_login(e):
-        """Tenta fazer login com o Supabase (Lógica do Plano B)."""
         username = username_field.value
         password = password_field.value
 
@@ -212,12 +310,7 @@ def main(page: ft.Page):
                                           .execute()
                 
                 if not resposta_perfil.data:
-                    print("Erro: Login bem-sucedido mas perfil não encontrado.")
-                    supabase.auth.sign_out()
-                    username_field.disabled = False
-                    password_field.disabled = False
-                    error_modal_global.show("Erro: O seu utilizador autenticou, mas não tem um perfil (função) definido.")
-                    return
+                    raise Exception("O seu utilizador autenticou, mas não tem um perfil (função) definido.")
 
                 funcao = resposta_perfil.data['funcao']
                 page.session.set("user_funcao", funcao) 
@@ -229,6 +322,14 @@ def main(page: ft.Page):
                 username_field.disabled = False
                 password_field.disabled = False
                 error_modal_global.show(f"Erro ao carregar perfil de utilizador: {ex_perfil}")
+                return
+
+            cache_result = _load_global_caches(page)
+            if cache_result is not True:
+                supabase.auth.sign_out() 
+                username_field.disabled = False
+                password_field.disabled = False
+                error_modal_global.show(f"Erro ao carregar dados iniciais (caches): {cache_result}")
                 return
 
             show_main_layout()
@@ -248,7 +349,6 @@ def main(page: ft.Page):
             error_modal_global.show(f"Ocorreu um erro inesperado: {ex}")
             
     def handle_logout(e):
-        """Limpa a sessão e volta para a tela de login."""
         try:
             supabase.auth.sign_out()
         except Exception as ex_logout:
@@ -258,50 +358,64 @@ def main(page: ft.Page):
         page.appbar = None 
         page.clean()
         
-        page.vertical_alignment = ft.MainAxisAlignment.CENTER 
+        page.vertical_alignment = ft.MainAxisAlignment.CENTER
+        page.padding = 10 
+        
         page.add(build_login_view())
         page.update()
 
     def build_login_view():
-        """Constrói a tela de login inicial (Versão Plano B)."""
+        """Constrói a tela de login moderna com ft.Card."""
         page.vertical_alignment = ft.MainAxisAlignment.CENTER
+        page.horizontal_alignment = ft.CrossAxisAlignment.CENTER
         
-        return ft.Column(
-            [
-                ft.Text("SISTEMA DE CONTROLE DE NOTAS DE CRÉDITO", size=24, weight=ft.FontWeight.BOLD),
-                ft.Text("SALC", size=20, weight=ft.FontWeight.W_500),
-                ft.Container(height=30), 
-                
-                username_field,
-                password_field,
-                
-                ft.Container(height=10), 
-                
-                ft.Row(
+        return ft.Card(
+            width=450,
+            elevation=10,
+            content=ft.Container(
+                padding=30,
+                content=ft.Column(
                     [
-                        ft.ElevatedButton(
-                            "Login", 
-                            on_click=handle_login, 
-                            expand=True, 
-                            icon="LOGIN"
+                        ft.Row(
+                            [
+                                ft.Icon(name="ANCHOR", size=30), 
+                                ft.Text("SALC", size=24, weight=ft.FontWeight.BOLD),
+                            ],
+                            alignment=ft.MainAxisAlignment.CENTER,
                         ),
+                        ft.Text(
+                            "Sistema de Controle de Notas de Crédito",
+                            size=16,
+                            weight=ft.FontWeight.W_500,
+                            text_align=ft.TextAlign.CENTER
+                        ),
+                        ft.Divider(height=20),
+                        
+                        username_field,
+                        password_field,
+                        
+                        ft.Container(height=10), 
+                        
+                        ft.Row(
+                            [
+                                ft.ElevatedButton(
+                                    "Login", 
+                                    on_click=handle_login, 
+                                    expand=True, 
+                                    icon="LOGIN"
+                                ),
+                            ],
+                        )
                     ],
-                    width=350
+                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                 )
-            ],
-            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-            alignment=ft.MainAxisAlignment.CENTER,
-            expand=True
+            )
         )
 
-    # --- Estado Inicial (DEV MODE DESATIVADO) ---
     page.add(build_login_view()) 
 
-# --- (MODIFICADO LOTE 6) Executar a Aplicação (Modo Web) ---
 if __name__ == "__main__":
     
-    # Define a porta. O Render espera a porta 10000.
-    # Para testes locais, usa 8550 se a porta do Render não estiver definida.
     port = int(os.environ.get("PORT", 8550))
     
     print(f"A iniciar aplicação web na porta: {port}")
@@ -311,10 +425,5 @@ if __name__ == "__main__":
         view=ft.AppView.WEB_BROWSER, 
         assets_dir="assets",
         upload_dir="uploads", 
-        
-        # --- CORREÇÃO (Removido o argumento 'secret_key') ---
-        # secret_key="... 
-        # --- FIM DA CORREÇÃO ---
-        
         port=port
     )
